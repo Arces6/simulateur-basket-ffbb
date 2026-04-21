@@ -37,7 +37,7 @@ st.set_page_config(
 
 FICHIER_DONNEES = "championnats.json"
 SEUIL_EXHAUSTIF = 20  # Si matchs restants <= 20, simulation exhaustive
-NB_SIMULATIONS_MC = 100_000  # Nombre de simulations Monte Carlo
+NB_SIMULATIONS_MC = 1_000_000  # Nombre de simulations Monte Carlo
 
 # =============================================================================
 # GESTION DES DONNÉES (JSON)
