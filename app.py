@@ -1265,7 +1265,7 @@ def page_classement(donnees, nom_champ):
 
     st.dataframe(
         df_cl.style.apply(colorier_ligne, axis=1),
-        use_container_width=True,
+        width=True,
         hide_index=True,
     )
 
@@ -1275,7 +1275,7 @@ def page_classement(donnees, nom_champ):
     st.subheader("Évolution du classement")
     fig_evo = graphique_evolution_classement(champ)
     if fig_evo:
-        st.plotly_chart(fig_evo, use_container_width=True)
+        st.plotly_chart(fig_evo, width=True)
     else:
         st.info("Pas encore assez de données pour afficher l'évolution.")
 
@@ -1364,7 +1364,7 @@ def page_simulation(donnees, nom_champ):
             champ["nb_relegations"],
             champ["nb_equipes"],
         )
-        st.plotly_chart(fig_sim, use_container_width=True)
+        st.plotly_chart(fig_sim, width=True)
 
         # Tableau
         df_sim = pd.DataFrame(resultats_sim)
@@ -1397,7 +1397,7 @@ def page_simulation(donnees, nom_champ):
 
         st.dataframe(
             df_sim.style.apply(colorier_sim, axis=1),
-            use_container_width=True,
+            width=True,
             hide_index=True,
         )
 
@@ -1532,7 +1532,7 @@ def main():
 
         for icone, page_id, label in pages:
             if st.button(f"{icone} {label}",
-                         use_container_width=True,
+                         width=True,
                          type=("primary"
                                if st.session_state["page"] == page_id
                                else "secondary")):
