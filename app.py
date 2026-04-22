@@ -2060,8 +2060,10 @@ def main():
                  nom_champ in donnees["championnats"])
 
     with st.sidebar:
-        st.title("""🏀 Simulateur FFBB
-Créé par Raphaël Halbwachs""")
+        st.title("""
+      🏀 Simulateur FFBB
+   Créé par Raphaël Halbwachs
+   """)
         st.divider()
 
         championnats_liste = list(donnees["championnats"].keys())
