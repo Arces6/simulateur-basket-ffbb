@@ -35,16 +35,15 @@ st.set_page_config(
 # CONSTANTES
 # =============================================================================
 
-FICHIER_DONNEES = "championnats.json"
-SEUIL_EXHAUSTIF = 20  # Si matchs restants <= 20, simulation exhaustive
-NB_SIMULATIONS_MC = 100_000  # Nombre de simulations Monte Carlo
+FICHIER_DONNEES  = "championnats.json"
+SEUIL_EXHAUSTIF  = 20
+NB_SIMULATIONS_MC = 100_000
 
 # =============================================================================
-# GESTION DES DONNÉES (JSON)
+# GESTION DES DONNÉES
 # =============================================================================
 
 def charger_donnees():
-    """Charge les données depuis le fichier JSON."""
     if os.path.exists(FICHIER_DONNEES):
         with open(FICHIER_DONNEES, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -52,19 +51,19 @@ def charger_donnees():
 
 
 def sauvegarder_donnees(donnees):
-    """Sauvegarde les données dans le fichier JSON."""
     with open(FICHIER_DONNEES, "w", encoding="utf-8") as f:
         json.dump(donnees, f, ensure_ascii=False, indent=2)
 
 
-def nouveau_championnat(nom, nb_equipes, nb_journees, nb_relegations,
+def nouveau_championnat(nom, nb_equipes, nb_journees,
+                         nb_relegations, nb_montees,
                          equipes, calendrier):
-    """Crée la structure d'un nouveau championnat."""
     return {
         "nom":            nom,
         "nb_equipes":     nb_equipes,
         "nb_journees":    nb_journees,
         "nb_relegations": nb_relegations,
+        "nb_montees":     nb_montees,        # AMÉLIORATION 1
         "equipes":        equipes,
         "calendrier":     calendrier,
         "resultats":      {},
@@ -77,62 +76,44 @@ def nouveau_championnat(nom, nb_equipes, nb_journees, nb_relegations,
 # =============================================================================
 
 def calculer_stats_equipe(eq, champ):
-    """
-    Calcule les statistiques complètes d'une équipe
-    à partir des résultats enregistrés.
-    """
     resultats = champ["resultats"]
-    equipes   = champ["equipes"]
-
-    pts = len(equipes) * 0  # Base 0
-    v = d = pts_marques = pts_encaisses = 0
-
-    # Points de base : chaque équipe commence avec autant de points
-    # que de matchs joués (minimum 1 pt par match)
-    matchs_joues = 0
+    pts = v = d = pts_marques = pts_encaisses = matchs_joues = 0
 
     for j_key, matchs_j in resultats.items():
         for match in matchs_j:
+            # AMÉLIORATION 3 : ignorer les matchs reportés
+            if match.get("reporte"):
+                continue
+
+            dom = match["domicile"]
+            ext = match["exterieur"]
+
             if match.get("penalite"):
-                # Cas pénalité
-                if match["domicile"] == eq:
+                if dom == eq or ext == eq:
+                    matchs_joues += 1
                     if match["vainqueur"] == eq:
                         pts += 2
                         v   += 1
                     else:
                         pts += 0
                         d   += 1
-                    matchs_joues += 1
-                elif match["exterieur"] == eq:
-                    if match["vainqueur"] == eq:
-                        pts += 2
-                        v   += 1
-                    else:
-                        pts += 0
-                        d   += 1
-                    matchs_joues += 1
             else:
-                # Match normal
-                if match["domicile"] == eq:
-                    matchs_joues    += 1
-                    pts_marques     += match["score_dom"]
-                    pts_encaisses   += match["score_ext"]
+                if dom == eq:
+                    matchs_joues  += 1
+                    pts_marques   += match["score_dom"]
+                    pts_encaisses += match["score_ext"]
                     if match["score_dom"] > match["score_ext"]:
-                        pts += 2
-                        v   += 1
+                        pts += 2; v += 1
                     else:
-                        pts += 1
-                        d   += 1
-                elif match["exterieur"] == eq:
-                    matchs_joues    += 1
-                    pts_marques     += match["score_ext"]
-                    pts_encaisses   += match["score_dom"]
+                        pts += 1; d += 1
+                elif ext == eq:
+                    matchs_joues  += 1
+                    pts_marques   += match["score_ext"]
+                    pts_encaisses += match["score_dom"]
                     if match["score_ext"] > match["score_dom"]:
-                        pts += 2
-                        v   += 1
+                        pts += 2; v += 1
                     else:
-                        pts += 1
-                        d   += 1
+                        pts += 1; d += 1
 
     return {
         "equipe":        eq,
@@ -147,10 +128,6 @@ def calculer_stats_equipe(eq, champ):
 
 
 def construire_matrice_cd(champ):
-    """
-    Construit la matrice des confrontations directes
-    à partir des résultats enregistrés.
-    """
     equipes    = champ["equipes"]
     resultats  = champ["resultats"]
 
@@ -160,6 +137,10 @@ def construire_matrice_cd(champ):
 
     for j_key, matchs_j in resultats.items():
         for match in matchs_j:
+            # AMÉLIORATION 3 : ignorer les matchs reportés
+            if match.get("reporte"):
+                continue
+
             dom = match["domicile"]
             ext = match["exterieur"]
 
@@ -171,14 +152,12 @@ def construire_matrice_cd(champ):
             else:
                 s_dom = match["score_dom"]
                 s_ext = match["score_ext"]
-
                 if s_dom > s_ext:
                     pts_cd[dom][ext] += 2
                     pts_cd[ext][dom] += 1
                 else:
                     pts_cd[dom][ext] += 1
                     pts_cd[ext][dom] += 2
-
                 diff_cd[dom][ext]    += (s_dom - s_ext)
                 diff_cd[ext][dom]    += (s_ext - s_dom)
                 marques_cd[dom][ext] += s_dom
@@ -187,9 +166,7 @@ def construire_matrice_cd(champ):
     return pts_cd, diff_cd, marques_cd
 
 
-def departager(groupe, pts_cd, diff_cd, marques_cd,
-               stats_dict):
-    """Applique les règles de départage FFBB."""
+def departager(groupe, pts_cd, diff_cd, marques_cd, stats_dict):
     if len(groupe) == 1:
         return groupe
 
@@ -240,32 +217,29 @@ def departager(groupe, pts_cd, diff_cd, marques_cd,
 
 
 def calculer_classement_complet(champ):
-    """
-    Calcule le classement complet avec départages FFBB.
-    Retourne une liste de dicts triée.
-    """
-    equipes   = champ["equipes"]
-    stats     = {eq: calculer_stats_equipe(eq, champ) for eq in equipes}
+    equipes  = champ["equipes"]
+    stats    = {eq: calculer_stats_equipe(eq, champ) for eq in equipes}
     pts_cd, diff_cd, marques_cd = construire_matrice_cd(champ)
 
-    equipes_triees = sorted(equipes,
-                            key=lambda e: stats[e]["pts"],
-                            reverse=True)
+    eq_triees = sorted(equipes,
+                       key=lambda e: stats[e]["pts"],
+                       reverse=True)
     classement = []
     i = 0
-    while i < len(equipes_triees):
-        pts_ref = stats[equipes_triees[i]]["pts"]
+    while i < len(eq_triees):
+        pts_ref = stats[eq_triees[i]]["pts"]
         groupe  = []
         j = i
-        while (j < len(equipes_triees) and
-               stats[equipes_triees[j]]["pts"] == pts_ref):
-            groupe.append(equipes_triees[j])
+        while (j < len(eq_triees) and
+               stats[eq_triees[j]]["pts"] == pts_ref):
+            groupe.append(eq_triees[j])
             j += 1
         if len(groupe) == 1:
             classement.append(groupe[0])
         else:
             classement.extend(
-                departager(groupe, pts_cd, diff_cd, marques_cd, stats)
+                departager(groupe, pts_cd, diff_cd,
+                           marques_cd, stats)
             )
         i = j
 
@@ -277,17 +251,18 @@ def calculer_classement_complet(champ):
 # =============================================================================
 
 def get_matchs_restants(champ):
-    """Retourne la liste des matchs non encore joués."""
+    """Retourne les matchs non joués (hors reportés non rejoués)."""
     resultats  = champ["resultats"]
     calendrier = champ["calendrier"]
-    equipes    = champ["equipes"]
 
     matchs_joues = set()
     for j_key, matchs_j in resultats.items():
         for match in matchs_j:
-            matchs_joues.add(
-                (int(j_key), match["domicile"], match["exterieur"])
-            )
+            # AMÉLIORATION 3 : un match reporté n'est pas "joué"
+            if not match.get("reporte"):
+                matchs_joues.add(
+                    (int(j_key), match["domicile"], match["exterieur"])
+                )
 
     matchs_restants = []
     for j_num, matchs_j in enumerate(calendrier, 1):
@@ -296,9 +271,9 @@ def get_matchs_restants(champ):
             ext = match["exterieur"]
             if (j_num, dom, ext) not in matchs_joues:
                 matchs_restants.append({
-                    "journee":   j_num,
-                    "domicile":  dom,
-                    "exterieur": ext,
+                    "journee":  j_num,
+                    "domicile": dom,
+                    "exterieur":ext,
                 })
 
     return matchs_restants
@@ -306,19 +281,19 @@ def get_matchs_restants(champ):
 
 def simuler_un_scenario(bits, matchs_restants, stats_base,
                          pts_cd_base, diff_cd_base, marques_cd_base,
-                         equipes, nb_relegations):
-    """Simule un scénario donné et retourne le classement."""
-    DIFF_MOY    = 10
-    SCORE_MOY_V = 75
-    SCORE_MOY_D = 65
+                         equipes, nb_relegations, nb_montees,
+                         diff_moyen):  # AMÉLIORATION 4
+    """Simule un scénario et retourne (maintenus, montes)."""
+    score_moy_v = 70 + diff_moyen // 2
+    score_moy_d = 70 - diff_moyen // 2
 
-    pts       = {eq: stats_base[eq]["pts"]         for eq in equipes}
-    diff_gen  = {eq: stats_base[eq]["diff"]         for eq in equipes}
-    marques   = {eq: stats_base[eq]["pts_marques"]  for eq in equipes}
+    pts      = {eq: stats_base[eq]["pts"]        for eq in equipes}
+    diff_gen = {eq: stats_base[eq]["diff"]        for eq in equipes}
+    marques  = {eq: stats_base[eq]["pts_marques"] for eq in equipes}
 
-    pts_cd    = {a: dict(pts_cd_base[a])     for a in equipes}
-    diff_cd   = {a: dict(diff_cd_base[a])    for a in equipes}
-    marq_cd   = {a: dict(marques_cd_base[a]) for a in equipes}
+    pts_cd   = {a: dict(pts_cd_base[a])     for a in equipes}
+    diff_cd  = {a: dict(diff_cd_base[a])    for a in equipes}
+    marq_cd  = {a: dict(marques_cd_base[a]) for a in equipes}
 
     for i, match in enumerate(matchs_restants):
         dom = match["domicile"]
@@ -330,21 +305,18 @@ def simuler_un_scenario(bits, matchs_restants, stats_base,
         pts[p]      += 1
         pts_cd[v][p] += 2
         pts_cd[p][v] += 1
-        diff_cd[v][p]  += DIFF_MOY
-        diff_cd[p][v]  -= DIFF_MOY
-        marq_cd[v][p]  += SCORE_MOY_V
-        marq_cd[p][v]  += SCORE_MOY_D
-        diff_gen[v]    += DIFF_MOY
-        diff_gen[p]    -= DIFF_MOY
-        marques[v]     += SCORE_MOY_V
-        marques[p]     += SCORE_MOY_D
+        diff_cd[v][p]  += diff_moyen
+        diff_cd[p][v]  -= diff_moyen
+        marq_cd[v][p]  += score_moy_v
+        marq_cd[p][v]  += score_moy_d
+        diff_gen[v]    += diff_moyen
+        diff_gen[p]    -= diff_moyen
+        marques[v]     += score_moy_v
+        marques[p]     += score_moy_d
 
     stats_fin = {
-        eq: {
-            "pts":         pts[eq],
-            "diff":        diff_gen[eq],
-            "pts_marques": marques[eq],
-        }
+        eq: {"pts": pts[eq], "diff": diff_gen[eq],
+             "pts_marques": marques[eq]}
         for eq in equipes
     }
 
@@ -361,104 +333,117 @@ def simuler_un_scenario(bits, matchs_restants, stats_base,
         if len(groupe) == 1:
             classement_final.append(groupe[0])
         else:
-            pts_mini  = {e: sum(pts_cd[e][a] for a in groupe if a != e)
+            pts_mini  = {e: sum(pts_cd[e][a]
+                                for a in groupe if a != e)
                          for e in groupe}
-            diff_mini = {e: sum(diff_cd[e][a] for a in groupe if a != e)
+            diff_mini = {e: sum(diff_cd[e][a]
+                                for a in groupe if a != e)
                          for e in groupe}
-            marq_mini = {e: sum(marq_cd[e][a] for a in groupe if a != e)
+            marq_mini = {e: sum(marq_cd[e][a]
+                                for a in groupe if a != e)
                          for e in groupe}
             groupe_t  = sorted(
                 groupe,
                 key=lambda e: (
                     pts_mini[e], diff_mini[e], marq_mini[e],
-                    stats_fin[e]["diff"], stats_fin[e]["pts_marques"],
+                    stats_fin[e]["diff"],
+                    stats_fin[e]["pts_marques"],
                 ),
                 reverse=True,
             )
             classement_final.extend(groupe_t)
         i = j
 
-    nb_maintien = len(equipes) - nb_relegations
-    return set(classement_final[:nb_maintien])
+    nb_eq       = len(equipes)
+    nb_maintien = nb_eq - nb_relegations
+    maintenus   = set(classement_final[:nb_maintien])
+    montes      = set(classement_final[:nb_montees])  # AMÉLIORATION 1
+
+    return maintenus, montes, classement_final
 
 
-def lancer_simulation(champ):
-    """
-    Lance la simulation exhaustive ou Monte Carlo
-    selon le nombre de matchs restants.
-    """
-    equipes        = champ["equipes"]
-    nb_relegations = champ["nb_relegations"]
+def lancer_simulation(champ, diff_moyen=10):  # AMÉLIORATION 4
+    equipes         = champ["equipes"]
+    nb_relegations  = champ["nb_relegations"]
+    nb_montees      = champ.get("nb_montees", 0)  # AMÉLIORATION 1
     matchs_restants = get_matchs_restants(champ)
     nb_matchs       = len(matchs_restants)
 
     if nb_matchs == 0:
-        return None, "Aucun match restant à simuler.", 0
+        return None, None, "Aucun match restant.", 0
 
-    stats_base = {eq: calculer_stats_equipe(eq, champ) for eq in equipes}
-    pts_cd_base, diff_cd_base, marques_cd_base = construire_matrice_cd(champ)
+    stats_base = {eq: calculer_stats_equipe(eq, champ)
+                  for eq in equipes}
+    pts_cd_base, diff_cd_base, marques_cd_base = \
+        construire_matrice_cd(champ)
 
-    compteur = {eq: 0 for eq in equipes}
-    mode     = "exhaustive" if nb_matchs <= SEUIL_EXHAUSTIF else "monte_carlo"
+    compteur_maintien = {eq: 0 for eq in equipes}
+    compteur_montee   = {eq: 0 for eq in equipes}  # AMÉLIORATION 1
+    compteur_rang     = {eq: defaultdict(int)       # AMÉLIORATION 2
+                         for eq in equipes}
+
+    mode = ("exhaustive" if nb_matchs <= SEUIL_EXHAUSTIF
+            else "monte_carlo")
 
     if mode == "exhaustive":
-        nb_scenarios = 2 ** nb_matchs
-        for scenario in range(nb_scenarios):
-            bits    = [(scenario >> i) & 1 for i in range(nb_matchs)]
-            maintenus = simuler_un_scenario(
+        nb_total = 2 ** nb_matchs
+        for scenario in range(nb_total):
+            bits = [(scenario >> i) & 1 for i in range(nb_matchs)]
+            maintenus, montes, classement_final = simuler_un_scenario(
                 bits, matchs_restants, stats_base,
                 pts_cd_base, diff_cd_base, marques_cd_base,
-                equipes, nb_relegations,
+                equipes, nb_relegations, nb_montees, diff_moyen,
             )
             for eq in maintenus:
-                compteur[eq] += 1
-        nb_total = nb_scenarios
-
+                compteur_maintien[eq] += 1
+            for eq in montes:
+                compteur_montee[eq] += 1
+            # AMÉLIORATION 2 : compteur de rang
+            for rang, eq in enumerate(classement_final, 1):
+                compteur_rang[eq][rang] += 1
     else:
         nb_total = NB_SIMULATIONS_MC
         for _ in range(nb_total):
-            bits    = [random.randint(0, 1) for _ in range(nb_matchs)]
-            maintenus = simuler_un_scenario(
+            bits = [random.randint(0, 1) for _ in range(nb_matchs)]
+            maintenus, montes, classement_final = simuler_un_scenario(
                 bits, matchs_restants, stats_base,
                 pts_cd_base, diff_cd_base, marques_cd_base,
-                equipes, nb_relegations,
+                equipes, nb_relegations, nb_montees, diff_moyen,
             )
             for eq in maintenus:
-                compteur[eq] += 1
+                compteur_maintien[eq] += 1
+            for eq in montes:
+                compteur_montee[eq] += 1
+            for rang, eq in enumerate(classement_final, 1):
+                compteur_rang[eq][rang] += 1
 
     resultats_sim = sorted(
-        [{"equipe": eq,
-          "maintien":   compteur[eq],
-          "relegation": nb_total - compteur[eq],
-          "pct":        round((compteur[eq] / nb_total) * 100, 2)}
+        [{
+            "equipe":    eq,
+            "maintien":  compteur_maintien[eq],
+            "relegation":nb_total - compteur_maintien[eq],
+            "pct":       round((compteur_maintien[eq]/nb_total)*100, 2),
+            "montee":    compteur_montee[eq],           # AMÉLIORATION 1
+            "pct_montee":round((compteur_montee[eq]/nb_total)*100, 2),
+         }
          for eq in equipes],
         key=lambda x: x["pct"],
         reverse=True,
     )
 
-    return resultats_sim, mode, nb_total
+    return resultats_sim, compteur_rang, mode, nb_total
 
 # =============================================================================
 # GRAPHIQUES
 # =============================================================================
 
 def graphique_evolution_classement(champ):
-    """
-    Génère un graphique d'évolution du classement
-    journée par journée.
-    """
-    equipes    = champ["equipes"]
-    calendrier = champ["calendrier"]
-    resultats  = champ["resultats"]
-    nb_j       = champ["nb_journees"]
+    equipes   = champ["equipes"]
+    resultats = champ["resultats"]
+    nb_j      = champ["nb_journees"]
 
-    # Calculer le classement après chaque journée
-    historique = []
-
-    champ_temp = {
-        **champ,
-        "resultats": {},
-    }
+    historique  = []
+    champ_temp  = {**champ, "resultats": {}}
 
     for j_num in range(1, nb_j + 1):
         j_key = str(j_num)
@@ -476,12 +461,10 @@ def graphique_evolution_classement(champ):
     if not historique:
         return None
 
-    df = pd.DataFrame(historique)
-
-    # Graphique des rangs (inversé : 1 en haut)
-    fig = go.Figure()
-
+    df       = pd.DataFrame(historique)
+    fig      = go.Figure()
     couleurs = px.colors.qualitative.Set3
+
     for idx, eq in enumerate(equipes):
         df_eq = df[df["equipe"] == eq]
         if df_eq.empty:
@@ -501,47 +484,44 @@ def graphique_evolution_classement(champ):
             ),
         ))
 
-    # Ligne de relégation
     nb_maintien = len(equipes) - champ["nb_relegations"]
+    nb_montees  = champ.get("nb_montees", 0)
+
+    # Ligne de relégation
     fig.add_hline(
         y=nb_maintien + 0.5,
-        line_dash="dash",
-        line_color="red",
-        line_width=2,
-        annotation_text="Zone de relégation",
+        line_dash="dash", line_color="red", line_width=2,
+        annotation_text="Zone relégation",
         annotation_position="right",
     )
+
+    # AMÉLIORATION 1 : Ligne de montée
+    if nb_montees > 0:
+        fig.add_hline(
+            y=nb_montees + 0.5,
+            line_dash="dash", line_color="green", line_width=2,
+            annotation_text="Zone montée",
+            annotation_position="right",
+        )
 
     fig.update_layout(
         title="Évolution du classement au fil des journées",
         xaxis_title="Journée",
         yaxis_title="Rang",
-        yaxis=dict(
-            autorange="reversed",
-            tickmode="linear",
-            tick0=1,
-            dtick=1,
-        ),
-        xaxis=dict(
-            tickmode="linear",
-            tick0=1,
-            dtick=1,
-        ),
-        legend=dict(
-            orientation="v",
-            x=1.02,
-            y=1,
-        ),
+        yaxis=dict(autorange="reversed", tickmode="linear",
+                   tick0=1, dtick=1),
+        xaxis=dict(tickmode="linear", tick0=1, dtick=1),
+        legend=dict(orientation="v", x=1.02, y=1),
         height=600,
         hovermode="x unified",
     )
-
     return fig
 
 
-def graphique_probabilites(resultats_sim, nb_relegations, nb_equipes):
-    """Graphique des probabilités de maintien."""
-    df = pd.DataFrame(resultats_sim)
+def graphique_probabilites(resultats_sim, champ):
+    nb_relegations = champ["nb_relegations"]
+    nb_montees     = champ.get("nb_montees", 0)
+    df             = pd.DataFrame(resultats_sim)
 
     couleurs = []
     for pct in df["pct"]:
@@ -566,13 +546,8 @@ def graphique_probabilites(resultats_sim, nb_relegations, nb_equipes):
         ),
     ))
 
-    fig.add_vline(
-        x=50,
-        line_dash="dash",
-        line_color="gray",
-        line_width=1,
-    )
-
+    fig.add_vline(x=50, line_dash="dash",
+                  line_color="gray", line_width=1)
     fig.update_layout(
         title="Probabilités de Maintien",
         xaxis_title="% de chances de maintien",
@@ -581,7 +556,49 @@ def graphique_probabilites(resultats_sim, nb_relegations, nb_equipes):
         height=500,
         showlegend=False,
     )
+    return fig
 
+
+# AMÉLIORATION 1 : Graphique montées
+def graphique_probabilites_montee(resultats_sim):
+    df       = pd.DataFrame(resultats_sim)
+    df_montee = df[df["pct_montee"] > 0].copy()
+
+    if df_montee.empty:
+        return None
+
+    df_montee = df_montee.sort_values("pct_montee", ascending=True)
+
+    couleurs = []
+    for pct in df_montee["pct_montee"]:
+        if pct == 100.0:   couleurs.append("#1a5276")
+        elif pct >= 90.0:  couleurs.append("#2980b9")
+        elif pct >= 70.0:  couleurs.append("#5dade2")
+        elif pct >= 50.0:  couleurs.append("#85c1e9")
+        else:              couleurs.append("#aed6f1")
+
+    fig = go.Figure(go.Bar(
+        x=df_montee["pct_montee"],
+        y=df_montee["equipe"],
+        orientation="h",
+        marker_color=couleurs,
+        text=[f"{p:.1f}%" for p in df_montee["pct_montee"]],
+        textposition="outside",
+        hovertemplate=(
+            "<b>%{y}</b><br>"
+            "Probabilité de montée : %{x:.2f}%<br>"
+            "<extra></extra>"
+        ),
+    ))
+    fig.add_vline(x=50, line_dash="dash",
+                  line_color="gray", line_width=1)
+    fig.update_layout(
+        title="Probabilités de Montée",
+        xaxis_title="% de chances de montée",
+        xaxis=dict(range=[0, 115]),
+        height=400,
+        showlegend=False,
+    )
     return fig
 
 # =============================================================================
@@ -589,9 +606,7 @@ def graphique_probabilites(resultats_sim, nb_relegations, nb_equipes):
 # =============================================================================
 
 def generer_pdf_streamlit(champ, classement, resultats_sim,
-                           mode_sim, nb_total):
-    """Génère le PDF et retourne les bytes pour téléchargement."""
-
+                           compteur_rang, mode_sim, nb_total):
     BLEU_TITRE   = HexColor("#1a3a6b")
     BLEU_CLAIR   = HexColor("#dce6f1")
     VERT         = HexColor("#1e7e34")
@@ -602,6 +617,7 @@ def generer_pdf_streamlit(champ, classement, resultats_sim,
     GRIS_CLAIR   = HexColor("#f2f2f2")
     GRIS_MOYEN   = HexColor("#bdc3c7")
     JAUNE_CLAIR  = HexColor("#fef9e7")
+    BLEU_MONTEE  = HexColor("#d6eaf8")   # AMÉLIORATION 1
 
     def couleur_pct(pct):
         if pct == 100.0:   return VERT_CLAIR
@@ -636,6 +652,11 @@ def generer_pdf_streamlit(champ, classement, resultats_sim,
         fontSize=12, textColor=white,
         fontName='Helvetica-Bold', alignment=TA_LEFT,
     )
+    st_sous_section = ParagraphStyle(
+        'SousSection', parent=styles['Heading2'],
+        fontSize=10, textColor=BLEU_TITRE,
+        fontName='Helvetica-Bold', spaceAfter=4,
+    )
     st_corps = ParagraphStyle(
         'Corps', parent=styles['Normal'],
         fontSize=9, spaceAfter=4, leading=14,
@@ -646,13 +667,18 @@ def generer_pdf_streamlit(champ, classement, resultats_sim,
         spaceAfter=4, leading=12,
     )
 
-    buffer   = io.BytesIO()
-    doc      = SimpleDocTemplate(
+    buffer = io.BytesIO()
+    doc    = SimpleDocTemplate(
         buffer, pagesize=A4,
         rightMargin=1.8*cm, leftMargin=1.8*cm,
         topMargin=1.5*cm,   bottomMargin=1.5*cm,
     )
     elements = []
+
+    nb_equipes     = len(champ["equipes"])
+    nb_relegations = champ["nb_relegations"]
+    nb_montees     = champ.get("nb_montees", 0)
+    nb_maintien    = nb_equipes - nb_relegations
 
     def bloc_bleu(texte, style):
         t = Table([[Paragraph(texte, style)]], colWidths=[larg_p])
@@ -687,9 +713,7 @@ def generer_pdf_streamlit(champ, classement, resultats_sim,
             ('ROWBACKGROUND', (0,1), (-1,-1), [white, GRIS_CLAIR]),
         ]
 
-    nb_maintien = len(champ["equipes"]) - champ["nb_relegations"]
-
-    # Page de garde
+    # ── Page de garde ──────────────────────────────────────────────────────
     elements.append(bloc_bleu("RAPPORT D'ANALYSE", st_titre))
     elements.append(bloc_bleu(champ["nom"], st_sous))
     elements.append(bloc_bleu(
@@ -698,13 +722,15 @@ def generer_pdf_streamlit(champ, classement, resultats_sim,
     elements.append(Spacer(1, 0.5*cm))
 
     infos = [
-        ["Championnat",      champ["nom"]],
-        ["Equipes",          str(champ["nb_equipes"])],
-        ["Journees",         str(champ["nb_journees"])],
-        ["Relegations",      str(champ["nb_relegations"])],
-        ["Mode simulation",  "Exhaustive" if mode_sim == "exhaustive"
-                             else f"Monte Carlo ({nb_total:,} simulations)"],
-        ["Scenarios",        f"{nb_total:,}"],
+        ["Championnat",     champ["nom"]],
+        ["Equipes",         str(nb_equipes)],
+        ["Journees",        str(champ["nb_journees"])],
+        ["Relegations",     str(nb_relegations)],
+        ["Montees",         str(nb_montees)],           # AMÉLIORATION 1
+        ["Mode simulation", "Exhaustive"
+                            if mode_sim == "exhaustive"
+                            else f"Monte Carlo ({nb_total:,})"],
+        ["Scenarios",       f"{nb_total:,}"],
     ]
     t_infos = Table(
         [[Paragraph(k, ParagraphStyle('b', parent=st_corps,
@@ -724,7 +750,7 @@ def generer_pdf_streamlit(champ, classement, resultats_sim,
     ]))
     elements.append(t_infos)
 
-    # Section 1 : Classement actuel
+    # ── Section 1 : Classement actuel ──────────────────────────────────────
     elements.append(PageBreak())
     elements.append(titre_section("1. Classement Actuel"))
     elements.append(Spacer(1, 0.3*cm))
@@ -733,11 +759,16 @@ def generer_pdf_streamlit(champ, classement, resultats_sim,
                  "Marques", "Encaisses", "Diff", "Zone"]]
     for item in classement:
         rang = item["rang"]
-        zone = ("Maintenu" if rang <= nb_maintien else "Relegue")
+        if rang <= nb_montees:
+            zone = "Montee"
+        elif rang <= nb_maintien:
+            zone = "Maintenu"
+        else:
+            zone = "Relegue"
         rows_cl.append([
             str(rang), item["equipe"],
             str(item["pts"]), str(item["j"]),
-            str(item["v"]), str(item["d"]),
+            str(item["v"]),   str(item["d"]),
             str(item["pts_marques"]),
             str(item["pts_encaisses"]),
             f"{item['diff']:+d}", zone,
@@ -746,15 +777,22 @@ def generer_pdf_streamlit(champ, classement, resultats_sim,
     t_cl = Table(rows_cl,
                  colWidths=[0.9*cm, 4.5*cm, 0.9*cm, 0.7*cm,
                             0.7*cm, 0.7*cm, 1.3*cm, 1.4*cm,
-                            1*cm, 2.2*cm])
+                            1*cm,   2.2*cm])
     st_cl = style_base()
     st_cl += [
         ('ALIGN',     (1,0), (1,-1), 'LEFT'),
         ('ALIGN',     (9,0), (9,-1), 'LEFT'),
         ('LINEBELOW', (0, nb_maintien), (-1, nb_maintien), 2, ROUGE),
     ]
+    if nb_montees > 0:
+        st_cl.append(
+            ('LINEBELOW', (0, nb_montees), (-1, nb_montees), 2, VERT)
+        )
     for i, item in enumerate(classement, 1):
-        if item["rang"] <= nb_maintien:
+        if item["rang"] <= nb_montees:
+            st_cl.append(('BACKGROUND', (0,i), (-1,i), BLEU_MONTEE))
+            st_cl.append(('BACKGROUND', (9,i), (9,i), BLEU_MONTEE))
+        elif item["rang"] <= nb_maintien:
             st_cl.append(('BACKGROUND', (9,i), (9,i), VERT_CLAIR))
         else:
             st_cl.append(('BACKGROUND', (9,i), (9,i), ROUGE_CLAIR))
@@ -762,7 +800,7 @@ def generer_pdf_streamlit(champ, classement, resultats_sim,
     t_cl.setStyle(TableStyle(st_cl))
     elements.append(t_cl)
 
-    # Section 2 : Résultats simulation
+    # ── Section 2 : Probabilités ────────────────────────────────────────────
     if resultats_sim:
         elements.append(PageBreak())
         elements.append(titre_section("2. Probabilites de Maintien"))
@@ -771,48 +809,122 @@ def generer_pdf_streamlit(champ, classement, resultats_sim,
         mode_txt = (
             f"Simulation exhaustive ({nb_total:,} scenarios)"
             if mode_sim == "exhaustive"
-            else f"Simulation Monte Carlo ({nb_total:,} simulations)"
+            else f"Monte Carlo ({nb_total:,} simulations)"
         )
         elements.append(Paragraph(f"Mode : {mode_txt}", st_note))
         elements.append(Spacer(1, 0.2*cm))
 
-        rows_sim = [["Rang", "Equipe", "Maintien",
-                     "Relegation", "% Maintien", "Statut"]]
+        # Tableau maintien + montée
+        entetes = ["Rang", "Equipe", "% Maintien", "Statut Maintien"]
+        if nb_montees > 0:
+            entetes += ["% Montee", "Statut Montee"]
+        rows_sim = [entetes]
+
         for rang, item in enumerate(resultats_sim, 1):
-            rows_sim.append([
+            row = [
                 str(rang),
                 item["equipe"],
-                f"{item['maintien']:,}",
-                f"{item['relegation']:,}",
                 f"{item['pct']:.2f}%",
                 statut_pct(item["pct"]),
-            ])
+            ]
+            if nb_montees > 0:
+                row += [
+                    f"{item['pct_montee']:.2f}%",
+                    statut_pct(item["pct_montee"]),
+                ]
+            rows_sim.append(row)
 
-        t_sim = Table(rows_sim,
-                      colWidths=[0.9*cm, 5.5*cm, 2*cm,
-                                 2*cm, 2*cm, 3.4*cm])
+        if nb_montees > 0:
+            col_ws = [0.9*cm, 5*cm, 2*cm, 3*cm, 2*cm, 2.9*cm]
+        else:
+            col_ws = [0.9*cm, 6*cm, 2.5*cm, 4*cm]
+
+        t_sim = Table(rows_sim, colWidths=col_ws)
         st_sim = style_base()
         st_sim += [
             ('ALIGN',    (1,0), (1,-1), 'LEFT'),
-            ('ALIGN',    (5,0), (5,-1), 'LEFT'),
-            ('FONTNAME', (4,1), (4,-1), 'Helvetica-Bold'),
+            ('FONTNAME', (2,1), (2,-1), 'Helvetica-Bold'),
         ]
         for i, item in enumerate(resultats_sim, 1):
             st_sim.append(
                 ('BACKGROUND', (0,i), (-1,i), couleur_pct(item["pct"]))
             )
-            if item["pct"] == 100.0:
-                st_sim.append(('TEXTCOLOR', (4,i), (4,i), VERT))
-            elif item["pct"] == 0.0:
-                st_sim.append(('TEXTCOLOR', (4,i), (4,i), ROUGE))
         t_sim.setStyle(TableStyle(st_sim))
         elements.append(t_sim)
         elements.append(Spacer(1, 0.3*cm))
-        elements.append(Paragraph(
-            "Note : Les departages des matchs futurs utilisent une "
-            "approximation de +10 pts pour le differentiel.",
-            st_note,
-        ))
+
+        # ── AMÉLIORATION 2 : Distribution des classements ──────────────────
+        if compteur_rang:
+            elements.append(PageBreak())
+            elements.append(
+                titre_section("3. Distribution des Classements Finaux"))
+            elements.append(Spacer(1, 0.3*cm))
+            elements.append(Paragraph(
+                "Probabilite (%) d'arriver a chaque place "
+                "finale pour chaque equipe. "
+                "Les places avec 0% sont exclues.",
+                st_note,
+            ))
+            elements.append(Spacer(1, 0.3*cm))
+
+            for item in resultats_sim:
+                eq   = item["equipe"]
+                dist = compteur_rang.get(eq, {})
+
+                rangs_ok = sorted(
+                    [r for r in range(1, nb_equipes + 1)
+                     if dist.get(r, 0) > 0]
+                )
+                if not rangs_ok:
+                    continue
+
+                elements.append(Paragraph(eq, st_sous_section))
+
+                rows_dist = [
+                    ["Place"] + [f"{r}e" for r in rangs_ok],
+                    ["Nb scen"] + [f"{dist[r]:,}" for r in rangs_ok],
+                    ["%"] + [
+                        f"{dist[r]/nb_total*100:.1f}%"
+                        for r in rangs_ok
+                    ],
+                ]
+                nb_cols = len(rangs_ok) + 1
+                col_w   = larg_p / nb_cols
+                t_dist  = Table(rows_dist,
+                                colWidths=[col_w] * nb_cols)
+
+                st_dist = [
+                    ('BACKGROUND',  (0,0), (-1,0),  BLEU_TITRE),
+                    ('TEXTCOLOR',   (0,0), (-1,0),  white),
+                    ('FONTNAME',    (0,0), (-1,0),  'Helvetica-Bold'),
+                    ('BACKGROUND',  (0,1), (0,-1),  BLEU_CLAIR),
+                    ('FONTNAME',    (0,1), (0,-1),  'Helvetica-Bold'),
+                    ('FONTSIZE',    (0,0), (-1,-1), 7),
+                    ('ALIGN',       (0,0), (-1,-1), 'CENTER'),
+                    ('GRID',        (0,0), (-1,-1), 0.3, GRIS_MOYEN),
+                    ('TOPPADDING',  (0,0), (-1,-1), 3),
+                    ('BOTTOMPADDING',(0,0),(-1,-1), 3),
+                    ('ROWBACKGROUND',(0,1),(-1,-1), [white, GRIS_CLAIR]),
+                ]
+                for j_col, r in enumerate(rangs_ok, 1):
+                    if r <= nb_montees:
+                        st_dist.append(
+                            ('BACKGROUND', (j_col,0), (j_col,0),
+                             HexColor("#aed6f1"))
+                        )
+                    elif r <= nb_maintien:
+                        st_dist.append(
+                            ('BACKGROUND', (j_col,0), (j_col,0),
+                             HexColor("#a9dfbf"))
+                        )
+                    else:
+                        st_dist.append(
+                            ('BACKGROUND', (j_col,0), (j_col,0),
+                             HexColor("#f5b7b1"))
+                        )
+                t_dist.setStyle(TableStyle(st_dist))
+                elements.append(t_dist)
+                elements.append(Spacer(1, 0.2*cm))
 
     # Pied de page
     elements.append(Spacer(1, 0.5*cm))
@@ -820,8 +932,7 @@ def generer_pdf_streamlit(champ, classement, resultats_sim,
         [[Paragraph(
             f"Rapport genere le "
             f"{datetime.now().strftime('%d/%m/%Y a %H:%M')} | "
-            f"{champ['nom']} | "
-            "Simulateur Basket FFBB",
+            f"{champ['nom']} | Simulateur Basket FFBB",
             ParagraphStyle('pied', parent=st_note,
                            alignment=TA_CENTER, textColor=white),
         )]],
@@ -843,39 +954,32 @@ def generer_pdf_streamlit(champ, classement, resultats_sim,
 # =============================================================================
 
 def page_gestion_championnats(donnees):
-    """Page de gestion des championnats."""
     st.title("🏀 Gestion des Championnats")
-
     col1, col2 = st.columns([1, 1])
 
     with col1:
         st.subheader("➕ Créer un nouveau championnat")
-
         with st.form("form_nouveau_champ"):
             nom = st.text_input(
                 "Nom du championnat",
                 placeholder="Ex: NM3 Poule H 2025-2026",
             )
-            col_a, col_b, col_c = st.columns(3)
+            col_a, col_b = st.columns(2)
             with col_a:
                 nb_equipes = st.number_input(
-                    "Nb équipes", min_value=4,
-                    max_value=20, value=14,
-                )
-            with col_b:
+                    "Nb équipes", min_value=4, max_value=20, value=14)
                 nb_journees = st.number_input(
-                    "Nb journées", min_value=2,
-                    max_value=50, value=26,
-                )
-            with col_c:
+                    "Nb journées", min_value=2, max_value=50, value=26)
+            with col_b:
                 nb_rel = st.number_input(
-                    "Nb relégations", min_value=1,
-                    max_value=10, value=4,
-                )
+                    "Nb relégations", min_value=0, max_value=10, value=4)
+                # AMÉLIORATION 1
+                nb_montees = st.number_input(
+                    "Nb montées", min_value=0, max_value=10, value=0,
+                    help="Nombre d'équipes accédant au niveau supérieur")
 
             submitted = st.form_submit_button(
-                "Créer le championnat", type="primary",
-            )
+                "Créer le championnat", type="primary")
 
             if submitted:
                 if not nom:
@@ -885,7 +989,7 @@ def page_gestion_championnats(donnees):
                 else:
                     donnees["championnats"][nom] = nouveau_championnat(
                         nom, nb_equipes, nb_journees,
-                        nb_rel, [], [],
+                        nb_rel, nb_montees, [], [],
                     )
                     sauvegarder_donnees(donnees)
                     st.success(f"✅ Championnat '{nom}' créé !")
@@ -893,7 +997,6 @@ def page_gestion_championnats(donnees):
 
     with col2:
         st.subheader("📋 Championnats existants")
-
         if not donnees["championnats"]:
             st.info("Aucun championnat créé pour l'instant.")
         else:
@@ -905,10 +1008,12 @@ def page_gestion_championnats(donnees):
                         st.write(f"**Journées :** {champ['nb_journees']}")
                         st.write(f"**Relégations :** "
                                  f"{champ['nb_relegations']}")
-                        nb_eq_saisies = len(champ.get("equipes", []))
-                        nb_j_saisies  = len(champ.get("resultats", {}))
-                        st.write(f"**Équipes saisies :** {nb_eq_saisies}")
-                        st.write(f"**Journées jouées :** {nb_j_saisies}")
+                        st.write(f"**Montées :** "      # AMÉLIORATION 1
+                                 f"{champ.get('nb_montees', 0)}")
+                        nb_eq = len(champ.get("equipes", []))
+                        nb_j  = len(champ.get("resultats", {}))
+                        st.write(f"**Équipes saisies :** {nb_eq}")
+                        st.write(f"**Journées jouées :** {nb_j}")
                         st.write(f"**Créé le :** {champ['cree_le']}")
                     with col_y:
                         if st.button("🔧 Ouvrir",
@@ -924,23 +1029,19 @@ def page_gestion_championnats(donnees):
 
 
 def page_equipes(donnees, nom_champ):
-    """Page de gestion des équipes."""
     champ = donnees["championnats"][nom_champ]
     st.title(f"👥 Équipes — {nom_champ}")
-
     col1, col2 = st.columns([1, 1])
 
     with col1:
         st.subheader("Saisie des équipes")
         st.info(f"Équipes attendues : {champ['nb_equipes']}")
-
         equipes_text = st.text_area(
             "Saisir les équipes (une par ligne)",
             value="\n".join(champ.get("equipes", [])),
             height=300,
             placeholder="TEAM A\nTEAM B\n...",
         )
-
         if st.button("💾 Sauvegarder les équipes", type="primary"):
             equipes = [e.strip() for e in equipes_text.split("\n")
                        if e.strip()]
@@ -950,7 +1051,7 @@ def page_equipes(donnees, nom_champ):
             elif len(set(equipes)) != len(equipes):
                 st.error("Des équipes sont en double.")
             else:
-                champ["equipes"]   = equipes
+                champ["equipes"]    = equipes
                 champ["modifie_le"] = datetime.now().strftime(
                     "%d/%m/%Y %H:%M")
                 sauvegarder_donnees(donnees)
@@ -967,7 +1068,6 @@ def page_equipes(donnees, nom_champ):
 
 
 def page_calendrier(donnees, nom_champ):
-    """Page de saisie du calendrier."""
     champ = donnees["championnats"][nom_champ]
     st.title(f"📅 Calendrier — {nom_champ}")
 
@@ -987,28 +1087,23 @@ def page_calendrier(donnees, nom_champ):
         range(1, nb_j + 1),
         format_func=lambda x: f"Journée {x}",
     )
-
-    j_idx = j_select - 1
-
-    # Récupérer les matchs existants pour cette journée
-    matchs_existants = []
-    if j_idx < len(calendrier):
-        matchs_existants = calendrier[j_idx]
+    j_idx            = j_select - 1
+    matchs_existants = (calendrier[j_idx]
+                        if j_idx < len(calendrier) else [])
 
     st.subheader(f"Journée {j_select}")
-
     with st.form(f"form_cal_j{j_select}"):
         matchs_j = []
         for m_idx in range(nb_matchs):
             col1, col2, col3 = st.columns([2, 0.3, 2])
-            ex = matchs_existants[m_idx] if m_idx < len(
-                matchs_existants) else {}
+            ex = (matchs_existants[m_idx]
+                  if m_idx < len(matchs_existants) else {})
             with col1:
                 dom = st.selectbox(
-                    f"Domicile {m_idx+1}",
-                    equipes,
+                    f"Domicile {m_idx+1}", equipes,
                     index=(equipes.index(ex["domicile"])
-                           if ex and ex.get("domicile") in equipes else 0),
+                           if ex and ex.get("domicile") in equipes
+                           else 0),
                     key=f"dom_{j_select}_{m_idx}",
                 )
             with col2:
@@ -1016,8 +1111,7 @@ def page_calendrier(donnees, nom_champ):
                 st.write("**vs**")
             with col3:
                 ext = st.selectbox(
-                    f"Extérieur {m_idx+1}",
-                    equipes,
+                    f"Extérieur {m_idx+1}", equipes,
                     index=(equipes.index(ex["exterieur"])
                            if ex and ex.get("exterieur") in equipes
                            else min(1, len(equipes)-1)),
@@ -1027,28 +1121,23 @@ def page_calendrier(donnees, nom_champ):
 
         if st.form_submit_button("💾 Sauvegarder la journée",
                                   type="primary"):
-            # Vérification
             equipes_j = []
             for m in matchs_j:
                 equipes_j.extend([m["domicile"], m["exterieur"]])
-            erreur = False
             if len(set(equipes_j)) != len(equipes_j):
                 st.error("Une équipe apparaît plusieurs fois "
                          "dans la même journée.")
-                erreur = True
-
-            if not erreur:
+            else:
                 while len(calendrier) <= j_idx:
                     calendrier.append([])
-                calendrier[j_idx] = matchs_j
-                champ["calendrier"]  = calendrier
-                champ["modifie_le"]  = datetime.now().strftime(
+                calendrier[j_idx]   = matchs_j
+                champ["calendrier"] = calendrier
+                champ["modifie_le"] = datetime.now().strftime(
                     "%d/%m/%Y %H:%M")
                 sauvegarder_donnees(donnees)
                 st.success(f"✅ Journée {j_select} sauvegardée !")
                 st.rerun()
 
-    # Affichage du calendrier complet
     st.subheader("Calendrier complet")
     if calendrier:
         for j_idx2, matchs_j2 in enumerate(calendrier):
@@ -1062,7 +1151,6 @@ def page_calendrier(donnees, nom_champ):
 
 
 def page_resultats(donnees, nom_champ):
-    """Page de saisie des résultats."""
     champ = donnees["championnats"][nom_champ]
     st.title(f"📝 Résultats — {nom_champ}")
 
@@ -1077,107 +1165,122 @@ def page_resultats(donnees, nom_champ):
     resultats  = champ.get("resultats", {})
     nb_j       = len(calendrier)
 
-    # Sélection journée
     j_select = st.selectbox(
         "Sélectionner la journée",
         range(1, nb_j + 1),
         format_func=lambda x: f"Journée {x}",
     )
-
     j_key    = str(j_select)
     j_idx    = j_select - 1
-    matchs_j = calendrier[j_idx] if j_idx < len(calendrier) else []
+    matchs_j = (calendrier[j_idx]
+                if j_idx < len(calendrier) else [])
 
     if not matchs_j:
         st.warning("Aucun match dans le calendrier pour cette journée.")
         return
 
     resultats_j = resultats.get(j_key, [])
-
     st.subheader(f"Journée {j_select}")
 
     with st.form(f"form_res_j{j_select}"):
         nouveaux_resultats = []
-
         for m_idx, match in enumerate(matchs_j):
             dom = match["domicile"]
             ext = match["exterieur"]
-
-            # Résultat existant
-            ex = (resultats_j[m_idx]
-                  if m_idx < len(resultats_j) else {})
+            ex  = (resultats_j[m_idx]
+                   if m_idx < len(resultats_j) else {})
 
             st.markdown(f"**{dom} vs {ext}**")
 
-            col1, col2, col3, col4, col5 = st.columns(
-                [2, 1, 1, 2, 2])
+            # AMÉLIORATION 3 : case "Match reporté"
+            reporte = st.checkbox(
+                "Match reporté",
+                value=bool(ex.get("reporte", False)),
+                key=f"rep_{j_select}_{m_idx}",
+                help="Cocher si ce match a été reporté à une date "
+                     "ultérieure. Il sera exclu du classement "
+                     "et simulé comme match restant.",
+            )
 
-            with col1:
-                st.write(f"🏠 {dom}")
-            with col2:
-                score_dom = st.number_input(
-                    "Score dom",
-                    min_value=0, max_value=999,
-                    value=int(ex.get("score_dom", 0)),
-                    key=f"sd_{j_select}_{m_idx}",
-                    label_visibility="collapsed",
-                )
-            with col3:
-                score_ext = st.number_input(
-                    "Score ext",
-                    min_value=0, max_value=999,
-                    value=int(ex.get("score_ext", 0)),
-                    key=f"se_{j_select}_{m_idx}",
-                    label_visibility="collapsed",
-                )
-            with col4:
-                st.write(f"✈️ {ext}")
-            with col5:
-                penalite = st.checkbox(
-                    "Pénalité/Forfait",
-                    value=bool(ex.get("penalite", False)),
-                    key=f"pen_{j_select}_{m_idx}",
-                    help="Cocher si ce match est un forfait ou "
-                         "une défaite par pénalité. "
-                         "Sélectionner ensuite le vainqueur.",
-                )
+            if reporte:
+                st.info("⏳ Match reporté — sera simulé comme "
+                        "match restant.")
+                nouveaux_resultats.append({
+                    "domicile":  dom,
+                    "exterieur": ext,
+                    "reporte":   True,
+                    "score_dom": 0,
+                    "score_ext": 0,
+                    "penalite":  False,
+                    "vainqueur": None,
+                })
+            else:
+                col1, col2, col3, col4, col5 = st.columns(
+                    [2, 1, 1, 2, 2])
+                with col1:
+                    st.write(f"🏠 {dom}")
+                with col2:
+                    score_dom = st.number_input(
+                        "Score dom",
+                        min_value=0, max_value=999,
+                        value=int(ex.get("score_dom", 0)),
+                        key=f"sd_{j_select}_{m_idx}",
+                        label_visibility="collapsed",
+                    )
+                with col3:
+                    score_ext = st.number_input(
+                        "Score ext",
+                        min_value=0, max_value=999,
+                        value=int(ex.get("score_ext", 0)),
+                        key=f"se_{j_select}_{m_idx}",
+                        label_visibility="collapsed",
+                    )
+                with col4:
+                    st.write(f"✈️ {ext}")
+                with col5:
+                    penalite = st.checkbox(
+                        "Pénalité/Forfait",
+                        value=bool(ex.get("penalite", False)),
+                        key=f"pen_{j_select}_{m_idx}",
+                    )
 
-            vainqueur = None
-            if penalite:
-                vainqueur = st.selectbox(
-                    "Vainqueur (pénalité)",
-                    [dom, ext],
-                    index=([dom, ext].index(ex["vainqueur"])
-                           if ex.get("vainqueur") in [dom, ext] else 0),
-                    key=f"vain_{j_select}_{m_idx}",
-                )
+                vainqueur = None
+                if penalite:
+                    vainqueur = st.selectbox(
+                        "Vainqueur (pénalité)",
+                        [dom, ext],
+                        index=([dom, ext].index(ex["vainqueur"])
+                               if ex.get("vainqueur") in [dom, ext]
+                               else 0),
+                        key=f"vain_{j_select}_{m_idx}",
+                    )
 
-            nouveaux_resultats.append({
-                "domicile":  dom,
-                "exterieur": ext,
-                "score_dom": score_dom,
-                "score_ext": score_ext,
-                "penalite":  penalite,
-                "vainqueur": vainqueur,
-            })
+                nouveaux_resultats.append({
+                    "domicile":  dom,
+                    "exterieur": ext,
+                    "score_dom": score_dom,
+                    "score_ext": score_ext,
+                    "penalite":  penalite,
+                    "reporte":   False,
+                    "vainqueur": vainqueur,
+                })
             st.divider()
 
         if st.form_submit_button("💾 Sauvegarder les résultats",
                                   type="primary"):
-            # Validation
             erreur = False
             for res in nouveaux_resultats:
-                if not res["penalite"]:
+                if not res["reporte"] and not res["penalite"]:
                     if res["score_dom"] == res["score_ext"]:
                         st.error(
-                            f"Score nul impossible ({res['domicile']} "
-                            f"vs {res['exterieur']}) sauf pénalité."
+                            f"Score nul impossible "
+                            f"({res['domicile']} vs {res['exterieur']})"
+                            f" sauf pénalité ou match reporté."
                         )
                         erreur = True
                         break
-
             if not erreur:
-                resultats[j_key] = nouveaux_resultats
+                resultats[j_key]    = nouveaux_resultats
                 champ["resultats"]  = resultats
                 champ["modifie_le"] = datetime.now().strftime(
                     "%d/%m/%Y %H:%M")
@@ -1188,12 +1291,19 @@ def page_resultats(donnees, nom_champ):
 
     # Affichage résultats existants
     st.subheader("Résultats enregistrés")
-    for j_k, res_j in sorted(resultats.items(), key=lambda x: int(x[0])):
+    for j_k, res_j in sorted(resultats.items(),
+                              key=lambda x: int(x[0])):
         with st.expander(f"Journée {j_k}"):
             for res in res_j:
-                if res.get("penalite"):
+                if res.get("reporte"):
                     st.write(
-                        f"  {res['domicile']} 0-0 {res['exterieur']} "
+                        f"  ⏳ {res['domicile']} vs "
+                        f"{res['exterieur']} — **REPORTÉ**"
+                    )
+                elif res.get("penalite"):
+                    st.write(
+                        f"  {res['domicile']} 0-0 "
+                        f"{res['exterieur']} "
                         f"(Pénalité → {res['vainqueur']})"
                     )
                 else:
@@ -1205,24 +1315,24 @@ def page_resultats(donnees, nom_champ):
 
 
 def page_classement(donnees, nom_champ):
-    """Page du classement actuel et évolution."""
     champ = donnees["championnats"][nom_champ]
     st.title(f"📊 Classement — {nom_champ}")
 
     if not champ.get("equipes"):
         st.warning("⚠️ Veuillez d'abord saisir les équipes.")
         return
-
     if not champ.get("resultats"):
         st.info("Aucun résultat enregistré pour l'instant.")
         return
 
     classement     = calculer_classement_complet(champ)
-    nb_maintien    = champ["nb_equipes"] - champ["nb_relegations"]
+    nb_equipes     = champ["nb_equipes"]
+    nb_relegations = champ["nb_relegations"]
+    nb_montees     = champ.get("nb_montees", 0)
+    nb_maintien    = nb_equipes - nb_relegations
     nb_j_jouees    = len(champ["resultats"])
     matchs_rest    = get_matchs_restants(champ)
 
-    # Métriques
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric("Journées jouées", nb_j_jouees)
@@ -1238,9 +1348,8 @@ def page_classement(donnees, nom_champ):
 
     st.divider()
 
-    # Tableau de classement
+    # Classement
     st.subheader("Classement actuel")
-
     df_cl = pd.DataFrame(classement)
     df_cl = df_cl.rename(columns={
         "rang":         "Rang",
@@ -1253,12 +1362,23 @@ def page_classement(donnees, nom_champ):
         "pts_encaisses":"Contre",
         "diff":         "Diff",
     })
-    df_cl["Zone"] = df_cl["Rang"].apply(
-        lambda r: "✅ Maintien" if r <= nb_maintien else "❌ Relégation"
-    )
+
+    # AMÉLIORATION 1 : Zone montée dans le classement
+    def get_zone(rang):
+        if rang <= nb_montees:
+            return "🔵 Montée"
+        elif rang <= nb_maintien:
+            return "✅ Maintien"
+        else:
+            return "❌ Relégation"
+
+    df_cl["Zone"] = df_cl["Rang"].apply(get_zone)
 
     def colorier_ligne(row):
-        if row["Rang"] <= nb_maintien:
+        rang = row["Rang"]
+        if rang <= nb_montees:
+            return ["background-color: #d6eaf8"] * len(row)
+        elif rang <= nb_maintien:
             return ["background-color: #d4edda"] * len(row)
         else:
             return ["background-color: #fadbd8"] * len(row)
@@ -1268,6 +1388,18 @@ def page_classement(donnees, nom_champ):
         use_container_width=True,
         hide_index=True,
     )
+
+    # Légende
+    col_l1, col_l2, col_l3 = st.columns(3)
+    with col_l1:
+        if nb_montees > 0:
+            st.markdown("🔵 **Zone de montée** "
+                        f"(Top {nb_montees})")
+    with col_l2:
+        st.markdown("✅ **Zone de maintien**")
+    with col_l3:
+        st.markdown(f"❌ **Zone de relégation** "
+                    f"(Bottom {nb_relegations})")
 
     st.divider()
 
@@ -1281,7 +1413,6 @@ def page_classement(donnees, nom_champ):
 
 
 def page_simulation(donnees, nom_champ):
-    """Page de simulation."""
     champ = donnees["championnats"][nom_champ]
     st.title(f"🎲 Simulation — {nom_champ}")
 
@@ -1296,8 +1427,8 @@ def page_simulation(donnees, nom_champ):
         st.success("✅ Toutes les journées sont terminées !")
         return
 
-    # Infos simulation
-    mode = "exhaustive" if nb_matchs <= SEUIL_EXHAUSTIF else "monte_carlo"
+    mode = ("exhaustive" if nb_matchs <= SEUIL_EXHAUSTIF
+            else "monte_carlo")
     nb_scenarios = (2 ** nb_matchs if mode == "exhaustive"
                     else NB_SIMULATIONS_MC)
 
@@ -1315,29 +1446,44 @@ def page_simulation(donnees, nom_champ):
 
     if mode == "exhaustive":
         st.success(
-            f"✅ Simulation exhaustive possible : {nb_scenarios:,} "
-            f"scénarios ({nb_matchs} matchs restants ≤ {SEUIL_EXHAUSTIF})"
+            f"✅ Simulation exhaustive : {nb_scenarios:,} scénarios"
         )
     else:
         st.warning(
-            f"⚠️ Simulation Monte Carlo : {nb_matchs} matchs restants "
-            f"→ {2**nb_matchs:.2e} scénarios impossibles à simuler "
-            f"exhaustivement. Utilisation de {NB_SIMULATIONS_MC:,} "
-            f"simulations aléatoires."
+            f"⚠️ Monte Carlo : {nb_matchs} matchs restants → "
+            f"{NB_SIMULATIONS_MC:,} simulations aléatoires."
         )
 
-    # Matchs restants
+    # AMÉLIORATION 4 : Slider écart moyen
+    st.divider()
+    st.subheader("⚙️ Paramètres de simulation")
+    diff_moyen = st.slider(
+        "Écart de points moyen pour les matchs simulés",
+        min_value=1,
+        max_value=30,
+        value=10,
+        step=1,
+        help="Définit l'écart de points moyen entre le vainqueur "
+             "et le perdant pour les matchs non encore joués. "
+             "Exemple : 10 = le vainqueur gagne de 10 points en moyenne.",
+    )
+    st.caption(
+        f"Avec cet écart : vainqueur ≈ {70 + diff_moyen//2} pts | "
+        f"perdant ≈ {70 - diff_moyen//2} pts"
+    )
+
+    st.divider()
+
     with st.expander("Voir les matchs restants"):
         for m in matchs_rest:
             st.write(f"J{m['journee']} — "
                      f"{m['domicile']} vs {m['exterieur']}")
 
-    st.divider()
-
     if st.button("🚀 Lancer la simulation", type="primary"):
         with st.spinner("Simulation en cours..."):
             debut = time.time()
-            resultats_sim, mode_ret, nb_total = lancer_simulation(champ)
+            resultats_sim, compteur_rang, mode_ret, nb_total = \
+                lancer_simulation(champ, diff_moyen)  # AMÉLIORATION 4
             duree = time.time() - debut
 
         if resultats_sim is None:
@@ -1345,71 +1491,159 @@ def page_simulation(donnees, nom_champ):
             return
 
         st.success(f"✅ Simulation terminée en {duree:.2f} secondes !")
-        st.session_state["resultats_sim"] = resultats_sim
-        st.session_state["mode_sim"]      = mode_ret
-        st.session_state["nb_total_sim"]  = nb_total
+        st.session_state["resultats_sim"]  = resultats_sim
+        st.session_state["compteur_rang"]  = compteur_rang
+        st.session_state["mode_sim"]       = mode_ret
+        st.session_state["nb_total_sim"]   = nb_total
 
-    # Affichage résultats simulation
+    # Affichage résultats
     if "resultats_sim" in st.session_state:
         resultats_sim = st.session_state["resultats_sim"]
+        compteur_rang = st.session_state["compteur_rang"]
         mode_ret      = st.session_state["mode_sim"]
         nb_total      = st.session_state["nb_total_sim"]
-        nb_maintien   = champ["nb_equipes"] - champ["nb_relegations"]
+        nb_montees    = champ.get("nb_montees", 0)
+        nb_equipes    = champ["nb_equipes"]
 
         st.subheader("Résultats de la simulation")
 
-        # Graphique
-        fig_sim = graphique_probabilites(
-            resultats_sim,
-            champ["nb_relegations"],
-            champ["nb_equipes"],
-        )
-        st.plotly_chart(fig_sim, use_container_width=True)
+        # Onglets maintien / montée / distribution
+        tabs = ["📊 Probabilités de maintien"]
+        if nb_montees > 0:
+            tabs.append("🔵 Probabilités de montée")
+        tabs.append("📈 Distribution des classements")  # AMÉLIORATION 2
 
-        # Tableau
-        df_sim = pd.DataFrame(resultats_sim)
-        df_sim["Statut"] = df_sim["pct"].apply(
-            lambda p: (
-                "✅ Garanti"       if p == 100.0 else
-                "🟢 Quasi-certain" if p >= 90.0  else
-                "🟡 Probable"      if p >= 70.0  else
-                "🟠 Incertain"     if p >= 50.0  else
-                "🔴 En danger"     if p > 0.0    else
-                "❌ Relégué"
+        tab_list = st.tabs(tabs)
+        tab_idx  = 0
+
+        with tab_list[tab_idx]:
+            fig_sim = graphique_probabilites(resultats_sim, champ)
+            st.plotly_chart(fig_sim, use_container_width=True)
+
+            df_sim = pd.DataFrame(resultats_sim)
+            df_sim["Statut"] = df_sim["pct"].apply(
+                lambda p: (
+                    "✅ Garanti"        if p == 100.0 else
+                    "🟢 Quasi-certain"  if p >= 90.0  else
+                    "🟡 Probable"       if p >= 70.0  else
+                    "🟠 Incertain"      if p >= 50.0  else
+                    "🔴 En danger"      if p > 0.0    else
+                    "❌ Relégué"
+                )
             )
-        )
-        df_sim = df_sim.rename(columns={
-            "equipe":    "Équipe",
-            "maintien":  "Scén. Maintien",
-            "relegation":"Scén. Relégation",
-            "pct":       "% Maintien",
-        })
+            df_affich = df_sim.rename(columns={
+                "equipe":    "Équipe",
+                "maintien":  "Scén. Maintien",
+                "relegation":"Scén. Relégation",
+                "pct":       "% Maintien",
+            })[["Équipe", "Scén. Maintien",
+                "Scén. Relégation", "% Maintien", "Statut"]]
 
-        def colorier_sim(row):
-            pct = row["% Maintien"]
-            if pct == 100.0:   c = "#d4edda"
-            elif pct >= 90.0:  c = "#d0f0c0"
-            elif pct >= 70.0:  c = "#fef9e7"
-            elif pct >= 50.0:  c = "#fdebd0"
-            elif pct > 0.0:    c = "#fadbd8"
-            else:              c = "#f0f0f0"
-            return [f"background-color: {c}"] * len(row)
+            def colorier_sim(row):
+                pct = row["% Maintien"]
+                if pct == 100.0:   c = "#d4edda"
+                elif pct >= 90.0:  c = "#d0f0c0"
+                elif pct >= 70.0:  c = "#fef9e7"
+                elif pct >= 50.0:  c = "#fdebd0"
+                elif pct > 0.0:    c = "#fadbd8"
+                else:              c = "#f0f0f0"
+                return [f"background-color: {c}"] * len(row)
 
-        st.dataframe(
-            df_sim.style.apply(colorier_sim, axis=1),
-            use_container_width=True,
-            hide_index=True,
-        )
+            st.dataframe(
+                df_affich.style.apply(colorier_sim, axis=1),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        tab_idx += 1
+
+        # AMÉLIORATION 1 : Onglet montée
+        if nb_montees > 0:
+            with tab_list[tab_idx]:
+                fig_montee = graphique_probabilites_montee(resultats_sim)
+                if fig_montee:
+                    st.plotly_chart(fig_montee,
+                                    use_container_width=True)
+
+                df_montee = pd.DataFrame(resultats_sim)
+                df_montee = df_montee.sort_values(
+                    "pct_montee", ascending=False)
+                df_montee["Statut"] = df_montee["pct_montee"].apply(
+                    lambda p: (
+                        "✅ Garanti"       if p == 100.0 else
+                        "🟢 Quasi-certain" if p >= 90.0  else
+                        "🟡 Probable"      if p >= 70.0  else
+                        "🟠 Incertain"     if p >= 50.0  else
+                        "🔴 En danger"     if p > 0.0    else
+                        "❌ Impossible"
+                    )
+                )
+                df_aff_m = df_montee.rename(columns={
+                    "equipe":    "Équipe",
+                    "montee":    "Scén. Montée",
+                    "pct_montee":"% Montée",
+                })[["Équipe", "Scén. Montée", "% Montée", "Statut"]]
+                st.dataframe(df_aff_m, use_container_width=True,
+                             hide_index=True)
+            tab_idx += 1
+
+        # AMÉLIORATION 2 : Onglet distribution
+        with tab_list[tab_idx]:
+            st.subheader("Distribution des classements finaux")
+            st.caption(
+                "Probabilité d'arriver à chaque place finale. "
+                "Les places à 0% sont exclues."
+            )
+            for item in resultats_sim:
+                eq   = item["equipe"]
+                dist = compteur_rang.get(eq, {})
+                rangs_ok = sorted(
+                    [r for r in range(1, nb_equipes + 1)
+                     if dist.get(r, 0) > 0]
+                )
+                if not rangs_ok:
+                    continue
+
+                with st.expander(
+                    f"{eq} — Maintien : {item['pct']:.2f}%"
+                ):
+                    nb_maintien_eq = (nb_equipes -
+                                      champ["nb_relegations"])
+                    dist_data = {
+                        f"{r}e place": [
+                            f"{dist[r]:,}",
+                            f"{dist[r]/nb_total*100:.2f}%",
+                        ]
+                        for r in rangs_ok
+                    }
+                    df_dist = pd.DataFrame(
+                        dist_data,
+                        index=["Scénarios", "%"],
+                    )
+
+                    def colorier_dist(col):
+                        rang = int(col.name.replace("e place", ""))
+                        if rang <= nb_montees:
+                            c = "#d6eaf8"
+                        elif rang <= nb_maintien_eq:
+                            c = "#d4edda"
+                        else:
+                            c = "#fadbd8"
+                        return [f"background-color: {c}"] * len(col)
+
+                    st.dataframe(
+                        df_dist.style.apply(colorier_dist, axis=0),
+                        use_container_width=True,
+                    )
 
         st.caption(
             f"Mode : {'Exhaustive' if mode_ret == 'exhaustive' else 'Monte Carlo'} "
             f"| Scénarios : {nb_total:,} | "
-            "Note : approximation +10 pts pour les différentiels futurs."
+            f"Écart moyen simulé : {diff_moyen} pts"
         )
 
 
 def page_rapport(donnees, nom_champ):
-    """Page de génération du rapport PDF."""
     champ = donnees["championnats"][nom_champ]
     st.title(f"📄 Rapport PDF — {nom_champ}")
 
@@ -1420,16 +1654,16 @@ def page_rapport(donnees, nom_champ):
         st.warning("⚠️ Aucun résultat enregistré.")
         return
 
-    classement = calculer_classement_complet(champ)
-
+    classement    = calculer_classement_complet(champ)
     resultats_sim = st.session_state.get("resultats_sim", None)
+    compteur_rang = st.session_state.get("compteur_rang", None)
     mode_sim      = st.session_state.get("mode_sim", None)
     nb_total      = st.session_state.get("nb_total_sim", None)
 
     if resultats_sim is None:
         st.info(
-            "💡 Pour inclure les probabilités de maintien dans le rapport, "
-            "lancez d'abord une simulation depuis l'onglet 'Simulation'."
+            "💡 Pour inclure les probabilités dans le rapport, "
+            "lancez d'abord une simulation."
         )
 
     st.subheader("Contenu du rapport")
@@ -1439,26 +1673,26 @@ def page_rapport(donnees, nom_champ):
         st.write("✅ Statistiques par équipe")
         if resultats_sim:
             st.write("✅ Probabilités de maintien")
-            st.write("✅ Graphique des probabilités")
+            if champ.get("nb_montees", 0) > 0:
+                st.write("✅ Probabilités de montée")
+            st.write("✅ Distribution des classements")  # AMÉLIORATION 2
     with col2:
         st.write(f"✅ Championnat : {nom_champ}")
         st.write(f"✅ Date : {datetime.now().strftime('%d/%m/%Y')}")
 
     st.divider()
 
-    if st.button("📄 Générer et télécharger le PDF",
-                 type="primary"):
+    if st.button("📄 Générer et télécharger le PDF", type="primary"):
         with st.spinner("Génération du PDF..."):
             pdf_bytes = generer_pdf_streamlit(
                 champ, classement, resultats_sim,
-                mode_sim, nb_total,
+                compteur_rang, mode_sim, nb_total,
             )
 
         nom_fichier = (
             f"rapport_{nom_champ.replace(' ', '_')}_"
             f"{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
         )
-
         st.download_button(
             label="⬇️ Télécharger le rapport PDF",
             data=pdf_bytes,
@@ -1473,26 +1707,20 @@ def page_rapport(donnees, nom_champ):
 # =============================================================================
 
 def main():
-    # Initialisation session state
     if "page" not in st.session_state:
         st.session_state["page"] = "accueil"
     if "champ_actif" not in st.session_state:
         st.session_state["champ_actif"] = None
 
-    donnees    = charger_donnees()
-    nom_champ  = st.session_state.get("champ_actif")
-    champ_ok   = (nom_champ is not None and
-                  nom_champ in donnees["championnats"])
+    donnees   = charger_donnees()
+    nom_champ = st.session_state.get("champ_actif")
+    champ_ok  = (nom_champ is not None and
+                 nom_champ in donnees["championnats"])
 
-    # ── Sidebar ────────────────────────────────────────────────────────────
     with st.sidebar:
-        st.image("https://upload.wikimedia.org/wikipedia/fr/thumb/"
-                 "a/a4/Logo_FFBB.svg/200px-Logo_FFBB.svg.png",
-                 width=80)
         st.title("🏀 Simulateur FFBB")
         st.divider()
 
-        # Sélecteur de championnat
         championnats_liste = list(donnees["championnats"].keys())
         if championnats_liste:
             champ_select = st.selectbox(
@@ -1505,6 +1733,7 @@ def main():
                 if champ_select != nom_champ:
                     st.session_state["champ_actif"] = champ_select
                     st.session_state.pop("resultats_sim", None)
+                    st.session_state.pop("compteur_rang", None)
                     st.rerun()
                 nom_champ = champ_select
                 champ_ok  = True
@@ -1512,30 +1741,30 @@ def main():
             st.info("Aucun championnat créé.")
 
         st.divider()
-
-        # Navigation
         st.subheader("Navigation")
 
         pages = [
-            ("🏠", "accueil",    "Accueil"),
+            ("🏠", "accueil",     "Accueil"),
             ("🏆", "championnats","Championnats"),
         ]
         if champ_ok:
             pages += [
-                ("👥", "equipes",   "Équipes"),
-                ("📅", "calendrier","Calendrier"),
-                ("📝", "resultats", "Résultats"),
-                ("📊", "classement","Classement"),
-                ("🎲", "simulation","Simulation"),
-                ("📄", "rapport",   "Rapport PDF"),
+                ("👥", "equipes",    "Équipes"),
+                ("📅", "calendrier", "Calendrier"),
+                ("📝", "resultats",  "Résultats"),
+                ("📊", "classement", "Classement"),
+                ("🎲", "simulation", "Simulation"),
+                ("📄", "rapport",    "Rapport PDF"),
             ]
 
         for icone, page_id, label in pages:
-            if st.button(f"{icone} {label}",
-                         use_container_width=True,
-                         type=("primary"
-                               if st.session_state["page"] == page_id
-                               else "secondary")):
+            if st.button(
+                f"{icone} {label}",
+                use_container_width=True,
+                type=("primary"
+                      if st.session_state["page"] == page_id
+                      else "secondary"),
+            ):
                 st.session_state["page"] = page_id
                 st.rerun()
 
@@ -1543,7 +1772,6 @@ def main():
             st.divider()
             st.caption(f"**Actif :** {nom_champ}")
 
-    # ── Contenu principal ──────────────────────────────────────────────────
     page = st.session_state["page"]
 
     if page == "accueil":
@@ -1551,33 +1779,37 @@ def main():
         st.markdown("""
         ### Bienvenue !
 
-        Cette application vous permet de simuler les scénarios de fin de
-        saison pour n'importe quel championnat FFBB.
+        Cette application vous permet de simuler les scénarios
+        de fin de saison pour n'importe quel championnat FFBB.
 
         #### Fonctionnalités
         - 🏆 Gestion de plusieurs championnats (NM3, PRM, etc.)
         - 👥 Saisie des équipes et du calendrier
         - 📝 Saisie des résultats match par match
+        - ⏳ Gestion des matchs reportés
         - 📊 Classement automatique avec règles de départage FFBB
         - 📈 Évolution du classement au fil des journées
-        - 🎲 Simulation exhaustive ou Monte Carlo des scénarios
+        - 🎲 Simulation exhaustive ou Monte Carlo
+        - 🔵 Probabilités de montée et de maintien
+        - 📈 Distribution des classements finaux
         - 📄 Génération de rapport PDF
 
         #### Comment commencer ?
-        1. Cliquer sur **🏆 Championnats** pour créer un championnat
-        2. Saisir les **👥 Équipes**
-        3. Saisir le **📅 Calendrier**
-        4. Entrer les **📝 Résultats** au fil des journées
-        5. Consulter le **📊 Classement**
-        6. Lancer une **🎲 Simulation** en fin de saison
-        7. Générer le **📄 Rapport PDF**
+        1. **🏆 Championnats** → Créer un championnat
+        2. **👥 Équipes** → Saisir les équipes
+        3. **📅 Calendrier** → Saisir le calendrier
+        4. **📝 Résultats** → Entrer les résultats au fil des journées
+        5. **📊 Classement** → Consulter le classement
+        6. **🎲 Simulation** → Lancer une simulation en fin de saison
+        7. **📄 Rapport PDF** → Générer le rapport
 
-        #### Règles appliquées
+        #### Règles FFBB appliquées
         | Paramètre | Valeur |
         |-----------|--------|
         | Victoire | 2 points |
-        | Défaite | 1 point |
+        | Défaite normale | 1 point |
         | Défaite par pénalité/forfait | 0 point |
+        | Match reporté | Non comptabilisé (simulé) |
         | Départage 1 | Points confrontations directes |
         | Départage 2 | Différentiel confrontations directes |
         | Départage 3 | Points marqués confrontations directes |
@@ -1587,25 +1819,18 @@ def main():
 
     elif page == "championnats":
         page_gestion_championnats(donnees)
-
     elif page == "equipes" and champ_ok:
         page_equipes(donnees, nom_champ)
-
     elif page == "calendrier" and champ_ok:
         page_calendrier(donnees, nom_champ)
-
     elif page == "resultats" and champ_ok:
         page_resultats(donnees, nom_champ)
-
     elif page == "classement" and champ_ok:
         page_classement(donnees, nom_champ)
-
     elif page == "simulation" and champ_ok:
         page_simulation(donnees, nom_champ)
-
     elif page == "rapport" and champ_ok:
         page_rapport(donnees, nom_champ)
-
     else:
         st.warning("⚠️ Veuillez sélectionner un championnat.")
         st.session_state["page"] = "championnats"
