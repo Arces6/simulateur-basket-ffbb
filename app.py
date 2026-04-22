@@ -2061,7 +2061,7 @@ def main():
 
     with st.sidebar:
         st.title("""🏀 Simulateur FFBB
-        Créé par Raphaël Halbwachs""")
+Créé par Raphaël Halbwachs""")
         st.divider()
 
         championnats_liste = list(donnees["championnats"].keys())
