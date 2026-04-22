@@ -37,7 +37,7 @@ st.set_page_config(
 
 FICHIER_DONNEES   = "championnats.json"
 SEUIL_EXHAUSTIF   = 20
-NB_SIMULATIONS_MC = 500_000
+NB_SIMULATIONS_MC = 100_000
 
 # =============================================================================
 # GESTION DES DONNÉES
