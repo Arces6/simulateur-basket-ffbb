@@ -37,7 +37,7 @@ st.set_page_config(
 
 FICHIER_DONNEES   = "championnats.json"
 SEUIL_EXHAUSTIF   = 20
-NB_SIMULATIONS_MC = 100_000
+NB_SIMULATIONS_MC = 500_000
 
 # =============================================================================
 # GESTION DES DONNÉES
@@ -513,7 +513,7 @@ def analyser_scenarios_personnalises(tous_scenarios, conditions,
     return nb_ok, pct_ok, proba_match, matchs_obligatoires
 
 # =============================================================================
-# STATUTS (corrigés)
+# STATUTS
 # =============================================================================
 
 def statut_maintien(pct):
@@ -2060,7 +2060,8 @@ def main():
                  nom_champ in donnees["championnats"])
 
     with st.sidebar:
-        st.title("🏀 Simulateur FFBB")
+        st.title("""🏀 Simulateur FFBB
+        Créé par Raphaël Halbwachs""")
         st.divider()
 
         championnats_liste = list(donnees["championnats"].keys())
