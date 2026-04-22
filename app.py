@@ -1021,6 +1021,11 @@ def page_gestion_championnats(donnees):
                             st.session_state["champ_actif"] = nom_c
                             st.session_state["page"] = "classement"
                             st.rerun()
+                        if st.button("✏️ Modifier",
+                                     key=f"edit_{nom_c}"):
+                            st.session_state["champ_a_modifier"] = nom_c
+                            st.session_state["page"] = "modifier_championnat"
+                            st.rerun()
                         if st.button("🗑️ Supprimer",
                                      key=f"del_{nom_c}"):
                             del donnees["championnats"][nom_c]
@@ -1702,6 +1707,92 @@ def page_rapport(donnees, nom_champ):
         )
         st.success("✅ PDF généré avec succès !")
 
+def page_modifier_championnat(donnees):
+    nom_champ = st.session_state.get("champ_a_modifier")
+
+    if not nom_champ or nom_champ not in donnees["championnats"]:
+        st.error("Championnat introuvable.")
+        st.session_state["page"] = "championnats"
+        st.rerun()
+        return
+
+    champ = donnees["championnats"][nom_champ]
+    st.title(f"✏️ Modifier — {nom_champ}")
+
+    st.info(
+        "⚠️ Les équipes, le calendrier et les résultats déjà "
+        "saisis sont conservés. Seuls les paramètres généraux "
+        "sont modifiables ici."
+    )
+
+    with st.form("form_modifier_champ"):
+        nouveau_nom = st.text_input(
+            "Nom du championnat",
+            value=nom_champ,
+        )
+        col_a, col_b = st.columns(2)
+        with col_a:
+            nb_equipes = st.number_input(
+                "Nb équipes",
+                min_value=4, max_value=20,
+                value=champ["nb_equipes"],
+            )
+            nb_journees = st.number_input(
+                "Nb journées",
+                min_value=2, max_value=50,
+                value=champ["nb_journees"],
+            )
+        with col_b:
+            nb_rel = st.number_input(
+                "Nb relégations",
+                min_value=0, max_value=10,
+                value=champ["nb_relegations"],
+            )
+            nb_montees = st.number_input(
+                "Nb montées",
+                min_value=0, max_value=10,
+                value=champ.get("nb_montees", 0),
+            )
+
+        submitted = st.form_submit_button(
+            "💾 Sauvegarder les modifications",
+            type="primary",
+        )
+
+        if submitted:
+            # Vérification du nouveau nom
+            if not nouveau_nom:
+                st.error("Le nom ne peut pas être vide.")
+            elif (nouveau_nom != nom_champ and
+                  nouveau_nom in donnees["championnats"]):
+                st.error("Un championnat avec ce nom existe déjà.")
+            else:
+                # Mise à jour des paramètres
+                champ["nb_equipes"]     = nb_equipes
+                champ["nb_journees"]    = nb_journees
+                champ["nb_relegations"] = nb_rel
+                champ["nb_montees"]     = nb_montees
+                champ["modifie_le"]     = datetime.now().strftime(
+                    "%d/%m/%Y %H:%M"
+                )
+
+                # Renommage si nécessaire
+                if nouveau_nom != nom_champ:
+                    champ["nom"] = nouveau_nom
+                    donnees["championnats"][nouveau_nom] = champ
+                    del donnees["championnats"][nom_champ]
+                    st.session_state["champ_actif"]    = nouveau_nom
+                    st.session_state["champ_a_modifier"] = nouveau_nom
+
+                sauvegarder_donnees(donnees)
+                st.success("✅ Championnat modifié avec succès !")
+                st.session_state["page"] = "championnats"
+                st.rerun()
+
+    if st.button("← Retour sans sauvegarder"):
+        st.session_state["page"] = "championnats"
+        st.rerun()
+
 # =============================================================================
 # APPLICATION PRINCIPALE
 # =============================================================================
@@ -1744,8 +1835,12 @@ def main():
         st.subheader("Navigation")
 
         pages = [
-            ("🏠", "accueil",     "Accueil"),
-            ("🏆", "championnats","Championnats"),
+            ("🏠", "accueil",          "Accueil"),
+            ("🏆", "championnats",     "Championnats"),
+            ("✏️", "modifier_championnat", "Modifier"),
+        ] if st.session_state.get("champ_a_modifier") else [
+            ("🏠", "accueil",      "Accueil"),
+            ("🏆", "championnats", "Championnats"),
         ]
         if champ_ok:
             pages += [
@@ -1819,6 +1914,8 @@ def main():
 
     elif page == "championnats":
         page_gestion_championnats(donnees)
+    elif page == "modifier_championnat":
+        page_modifier_championnat(donnees)
     elif page == "equipes" and champ_ok:
         page_equipes(donnees, nom_champ)
     elif page == "calendrier" and champ_ok:
