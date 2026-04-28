@@ -32,6 +32,79 @@ st.set_page_config(
 )
 
 # =============================================================================
+# CSS PERSONNALISÉ
+# =============================================================================
+
+st.markdown("""
+<style>
+/* Bouton match domicile */
+.match-btn-dom {
+    background-color: #1a3a6b;
+    color: white;
+    border: 2px solid #2980b9;
+    border-radius: 8px;
+    padding: 8px 12px;
+    width: 100%;
+    text-align: center;
+    cursor: pointer;
+    font-weight: bold;
+    font-size: 13px;
+    margin: 2px 0;
+    transition: all 0.2s;
+}
+.match-btn-dom:hover {
+    background-color: #2980b9;
+}
+/* Bouton match extérieur */
+.match-btn-ext {
+    background-color: #1a3a6b;
+    color: white;
+    border: 2px solid #2980b9;
+    border-radius: 8px;
+    padding: 8px 12px;
+    width: 100%;
+    text-align: center;
+    cursor: pointer;
+    font-weight: bold;
+    font-size: 13px;
+    margin: 2px 0;
+    transition: all 0.2s;
+}
+/* Équipe sélectionnée comme vainqueur */
+.match-btn-winner {
+    background-color: #1e7e34 !important;
+    border-color: #28a745 !important;
+}
+/* Équipe perdante */
+.match-btn-loser {
+    background-color: #4a4a4a !important;
+    border-color: #6c757d !important;
+    color: #aaa !important;
+}
+/* Carte de match */
+.match-card {
+    background-color: #0e1a2e;
+    border: 1px solid #2c3e50;
+    border-radius: 10px;
+    padding: 10px;
+    margin: 5px 0;
+}
+/* Barre de probabilité */
+.prob-bar-container {
+    background-color: #2c3e50;
+    border-radius: 5px;
+    height: 8px;
+    width: 100%;
+    margin: 4px 0;
+}
+.prob-bar-fill {
+    border-radius: 5px;
+    height: 8px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# =============================================================================
 # CONSTANTES
 # =============================================================================
 
@@ -334,8 +407,6 @@ def simuler_un_scenario(bits, matchs_restants, stats_base,
     maintenus   = set(classement_final[:nb_maintien])
     montes      = set(classement_final[:nb_montees]) if nb_montees > 0 else set()
     relegues    = set(classement_final[nb_maintien:])
-
-    # Rangs finaux
     rangs_finaux = {eq: rang + 1 for rang, eq in enumerate(classement_final)}
 
     return maintenus, montes, relegues, classement_final, rangs_finaux, pts
@@ -359,7 +430,7 @@ def lancer_simulation(champ, diff_moyen=10):
     compteur_rang     = {eq: defaultdict(int) for eq in equipes}
     tous_scenarios    = []
 
-    mode = ("exhaustive" if nb_matchs <= SEUIL_EXHAUSTIF else "monte_carlo")
+    mode = "exhaustive" if nb_matchs <= SEUIL_EXHAUSTIF else "monte_carlo"
 
     if mode == "exhaustive":
         nb_total = 2 ** nb_matchs
@@ -428,6 +499,101 @@ def lancer_simulation(champ, diff_moyen=10):
 
     return resultats_sim, compteur_rang, tous_scenarios, mode, nb_total
 
+
+# =============================================================================
+# SIMULATION PERSONNALISÉE (avec résultats fixés)
+# =============================================================================
+
+def calculer_proba_avec_resultats_fixes(
+        champ, resultats_fixes, diff_moyen=10):
+    """
+    Calcule les probabilités de maintien en fixant certains résultats.
+    resultats_fixes = {(journee, dom, ext): "dom" | "ext"}
+    Les matchs non fixés sont simulés (exhaustif ou Monte Carlo).
+    """
+    equipes         = champ["equipes"]
+    nb_relegations  = champ["nb_relegations"]
+    nb_montees      = champ.get("nb_montees", 0)
+    matchs_restants = get_matchs_restants(champ)
+    nb_matchs       = len(matchs_restants)
+
+    if nb_matchs == 0:
+        return None, 0, "exhaustive"
+
+    stats_base = {eq: calculer_stats_equipe(eq, champ) for eq in equipes}
+    pts_cd_base, diff_cd_base, marques_cd_base = construire_matrice_cd(champ)
+
+    # Séparer matchs fixés et matchs libres
+    matchs_libres = []
+    bits_fixes    = {}
+
+    for i, match in enumerate(matchs_restants):
+        cle = (match["journee"], match["domicile"], match["exterieur"])
+        if cle in resultats_fixes:
+            vainqueur = resultats_fixes[cle]
+            bits_fixes[i] = 0 if vainqueur == "dom" else 1
+        else:
+            matchs_libres.append(i)
+
+    nb_libres = len(matchs_libres)
+    mode      = "exhaustive" if nb_libres <= SEUIL_EXHAUSTIF else "monte_carlo"
+
+    compteur_maintien = {eq: 0 for eq in equipes}
+    compteur_montee   = {eq: 0 for eq in equipes}
+
+    if mode == "exhaustive":
+        nb_total = 2 ** nb_libres
+        for scenario in range(nb_total):
+            bits = [0] * nb_matchs
+            # Appliquer les bits fixes
+            for idx, bit in bits_fixes.items():
+                bits[idx] = bit
+            # Appliquer les bits libres
+            for k, idx in enumerate(matchs_libres):
+                bits[idx] = (scenario >> k) & 1
+
+            maintenus, montes, _, _, _, _ = simuler_un_scenario(
+                bits, matchs_restants, stats_base,
+                pts_cd_base, diff_cd_base, marques_cd_base,
+                equipes, nb_relegations, nb_montees, diff_moyen,
+            )
+            for eq in maintenus:
+                compteur_maintien[eq] += 1
+            for eq in montes:
+                compteur_montee[eq] += 1
+    else:
+        nb_total = NB_SIMULATIONS_MC
+        for _ in range(nb_total):
+            bits = [0] * nb_matchs
+            for idx, bit in bits_fixes.items():
+                bits[idx] = bit
+            for idx in matchs_libres:
+                bits[idx] = random.randint(0, 1)
+
+            maintenus, montes, _, _, _, _ = simuler_un_scenario(
+                bits, matchs_restants, stats_base,
+                pts_cd_base, diff_cd_base, marques_cd_base,
+                equipes, nb_relegations, nb_montees, diff_moyen,
+            )
+            for eq in maintenus:
+                compteur_maintien[eq] += 1
+            for eq in montes:
+                compteur_montee[eq] += 1
+
+    resultats = sorted(
+        [{
+            "equipe":     eq,
+            "pct":        round((compteur_maintien[eq] / nb_total) * 100, 2),
+            "pct_montee": round((compteur_montee[eq]  / nb_total) * 100, 2),
+            "maintien":   compteur_maintien[eq],
+         }
+         for eq in equipes],
+        key=lambda x: x["pct"],
+        reverse=True,
+    )
+
+    return resultats, nb_total, mode
+
 # =============================================================================
 # ANALYSE SCÉNARIOS PERSONNALISÉS
 # =============================================================================
@@ -435,7 +601,6 @@ def lancer_simulation(champ, diff_moyen=10):
 def analyser_scenarios_personnalises(tous_scenarios, conditions,
                                       matchs_restants, nb_total):
     scenarios_ok = []
-
     for sc in tous_scenarios:
         valide = True
         for eq, statut in conditions.items():
@@ -457,7 +622,6 @@ def analyser_scenarios_personnalises(tous_scenarios, conditions,
     if nb_ok == 0:
         return nb_ok, pct_ok, [], [], scenarios_ok
 
-    # Probabilité par match
     proba_match = []
     for i, match in enumerate(matchs_restants):
         dom_gagne = sum(1 for sc in scenarios_ok if sc["bits"][i] == 0)
@@ -470,7 +634,6 @@ def analyser_scenarios_personnalises(tous_scenarios, conditions,
             "pct_ext":   round(ext_gagne / nb_ok * 100, 1),
         })
 
-    # Matchs obligatoires (100%)
     matchs_obligatoires = []
     for i, match in enumerate(matchs_restants):
         dom_gagne = sum(1 for sc in scenarios_ok if sc["bits"][i] == 0)
@@ -612,41 +775,6 @@ def graphique_probabilites(resultats_sim, champ):
         xaxis=dict(range=[0, 115]),
         yaxis=dict(autorange="reversed"),
         height=500, showlegend=False,
-    )
-    return fig
-
-
-def graphique_probabilites_montee(resultats_sim):
-    df        = pd.DataFrame(resultats_sim)
-    df_montee = df[df["pct_montee"] > 0].copy()
-    if df_montee.empty:
-        return None
-
-    df_montee = df_montee.sort_values("pct_montee", ascending=True)
-    couleurs  = []
-    for pct in df_montee["pct_montee"]:
-        if pct == 100.0:   couleurs.append("#1a5276")
-        elif pct >= 90.0:  couleurs.append("#2980b9")
-        elif pct >= 70.0:  couleurs.append("#5dade2")
-        elif pct >= 50.0:  couleurs.append("#85c1e9")
-        else:              couleurs.append("#aed6f1")
-
-    fig = go.Figure(go.Bar(
-        x=df_montee["pct_montee"], y=df_montee["equipe"], orientation="h",
-        marker_color=couleurs,
-        text=[f"{p:.1f}%" for p in df_montee["pct_montee"]],
-        textposition="outside",
-        hovertemplate=(
-            "<b>%{y}</b><br>Probabilité de montée : %{x:.2f}%<br>"
-            "<extra></extra>"
-        ),
-    ))
-    fig.add_vline(x=50, line_dash="dash", line_color="gray", line_width=1)
-    fig.update_layout(
-        title="Probabilités de Montée",
-        xaxis_title="% de chances de montée",
-        xaxis=dict(range=[0, 115]),
-        height=400, showlegend=False,
     )
     return fig
 
@@ -820,7 +948,8 @@ def generer_pdf_streamlit(champ, classement, resultats_sim,
         ('LINEBELOW', (0, nb_maintien), (-1, nb_maintien), 2, ROUGE),
     ]
     if nb_montees > 0:
-        st_cl.append(('LINEBELOW', (0, nb_montees), (-1, nb_montees), 2, VERT))
+        st_cl.append(
+            ('LINEBELOW', (0, nb_montees), (-1, nb_montees), 2, VERT))
     for i, item in enumerate(classement, 1):
         if item["rang"] <= nb_montees:
             st_cl.append(('BACKGROUND', (0,i), (-1,i), BLEU_MONTEE))
@@ -959,7 +1088,6 @@ def page_sauvegarde(donnees):
     st.title("💾 Sauvegarde & Restauration")
 
     st.subheader("📤 Exporter les données")
-    st.write("Téléchargez une copie de toutes vos données.")
     json_bytes = json.dumps(donnees, ensure_ascii=False, indent=2).encode("utf-8")
     nom_export = f"sauvegarde_basket_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
     st.download_button(
@@ -982,7 +1110,8 @@ def page_sauvegarde(donnees):
                 st.error("Fichier invalide : format non reconnu.")
             else:
                 nb_champ = len(donnees_import["championnats"])
-                st.success(f"✅ Fichier valide : {nb_champ} championnat(s) trouvé(s).")
+                st.success(
+                    f"✅ Fichier valide : {nb_champ} championnat(s) trouvé(s).")
                 st.write("**Championnats dans ce fichier :**")
                 for nom_c in donnees_import["championnats"]:
                     st.write(f"  • {nom_c}")
@@ -1278,11 +1407,10 @@ def page_resultats(donnees, nom_champ):
             reporte = st.checkbox(
                 "Match reporté", value=bool(ex.get("reporte", False)),
                 key=f"rep_{j_select}_{m_idx}",
-                help="Cocher si ce match a été reporté.",
             )
 
             if reporte:
-                st.info("⏳ Match reporté — sera simulé comme match restant.")
+                st.info("⏳ Match reporté.")
                 nouveaux_resultats.append({
                     "domicile": dom, "exterieur": ext,
                     "reporte": True, "score_dom": 0, "score_ext": 0,
@@ -1472,18 +1600,17 @@ def page_simulation(donnees, nom_champ):
     if mode == "exhaustive":
         st.success(f"✅ Simulation exhaustive : {nb_scenarios:,} scénarios")
     else:
-        st.warning(f"⚠️ Monte Carlo : {nb_matchs} matchs restants → "
-                   f"{NB_SIMULATIONS_MC:,} simulations aléatoires.")
+        st.warning(f"⚠️ Monte Carlo : {nb_matchs} matchs → "
+                   f"{NB_SIMULATIONS_MC:,} simulations.")
 
     st.divider()
     st.subheader("⚙️ Paramètres de simulation")
     diff_moyen = st.slider(
         "Écart de points moyen pour les matchs simulés",
         min_value=1, max_value=30, value=10, step=1,
-        help="Écart de points moyen entre vainqueur et perdant.",
     )
-    st.caption(f"Avec cet écart : vainqueur ≈ {70 + diff_moyen//2} pts | "
-               f"perdant ≈ {70 - diff_moyen//2} pts")
+    st.caption(f"Vainqueur ≈ {70 + diff_moyen//2} pts | "
+               f"Perdant ≈ {70 - diff_moyen//2} pts")
     st.divider()
 
     with st.expander("Voir les matchs restants"):
@@ -1509,7 +1636,6 @@ def page_simulation(donnees, nom_champ):
         st.session_state["nb_total_sim"]    = nb_total
         st.session_state["matchs_rest_sim"] = matchs_rest
         st.session_state["diff_moyen_sim"]  = diff_moyen
-        # Reset analyse perso si nouvelle simulation
         st.session_state.pop("analyse_perso", None)
 
     if "resultats_sim" in st.session_state:
@@ -1526,27 +1652,34 @@ def page_simulation(donnees, nom_champ):
 
         st.subheader("Résultats de la simulation")
 
-        tabs = ["📊 Probabilités de maintien"]
-        if nb_montees > 0:
-            tabs.append("🔵 Probabilités de montée")
-        tabs.append("📈 Distribution des classements")
-        tabs.append("🔍 Scénarios personnalisés")
-
+        tabs = [
+            "📊 Probabilités de maintien",
+            "📈 Distribution des classements",
+            "🔍 Scénarios détaillés",
+        ]
         tab_list = st.tabs(tabs)
-        tab_idx  = 0
 
         # Onglet maintien
-        with tab_list[tab_idx]:
+        with tab_list[0]:
             fig_sim = graphique_probabilites(resultats_sim, champ)
             st.plotly_chart(fig_sim, use_container_width=True)
 
             df_sim = pd.DataFrame(resultats_sim)
             df_sim["Statut"] = df_sim["pct"].apply(statut_maintien)
-            df_affich = df_sim.rename(columns={
+            if nb_montees > 0:
+                df_sim["Statut Montée"] = df_sim["pct_montee"].apply(statut_montee)
+
+            cols_affich = ["equipe", "maintien", "relegation", "pct", "Statut"]
+            rename_map  = {
                 "equipe": "Équipe", "maintien": "Scén. Maintien",
                 "relegation": "Scén. Relégation", "pct": "% Maintien",
-            })[["Équipe", "Scén. Maintien", "Scén. Relégation",
-                "% Maintien", "Statut"]]
+            }
+            if nb_montees > 0:
+                cols_affich.append("pct_montee")
+                cols_affich.append("Statut Montée")
+                rename_map["pct_montee"] = "% Montée"
+
+            df_affich = df_sim[cols_affich].rename(columns=rename_map)
 
             def colorier_sim(row):
                 pct = row["% Maintien"]
@@ -1562,29 +1695,10 @@ def page_simulation(donnees, nom_champ):
                 df_affich.style.apply(colorier_sim, axis=1),
                 use_container_width=True, hide_index=True,
             )
-        tab_idx += 1
-
-        # Onglet montée
-        if nb_montees > 0:
-            with tab_list[tab_idx]:
-                fig_montee = graphique_probabilites_montee(resultats_sim)
-                if fig_montee:
-                    st.plotly_chart(fig_montee, use_container_width=True)
-                df_montee = pd.DataFrame(resultats_sim)
-                df_montee = df_montee.sort_values("pct_montee", ascending=False)
-                df_montee["Statut"] = df_montee["pct_montee"].apply(statut_montee)
-                df_aff_m = df_montee.rename(columns={
-                    "equipe": "Équipe", "montee": "Scén. Montée",
-                    "pct_montee": "% Montée",
-                })[["Équipe", "Scén. Montée", "% Montée", "Statut"]]
-                st.dataframe(df_aff_m, use_container_width=True, hide_index=True)
-            tab_idx += 1
 
         # Onglet distribution
-        with tab_list[tab_idx]:
+        with tab_list[1]:
             st.subheader("Distribution des classements finaux")
-            st.caption("Probabilité d'arriver à chaque place finale. "
-                       "Les places à 0% sont exclues.")
             for item in resultats_sim:
                 eq   = item["equipe"]
                 dist = compteur_rang.get(eq, {})
@@ -1613,33 +1727,20 @@ def page_simulation(donnees, nom_champ):
                         df_dist.style.apply(colorier_dist, axis=0),
                         use_container_width=True,
                     )
-        tab_idx += 1
 
-        # =====================================================================
-        # ONGLET SCÉNARIOS PERSONNALISÉS (avec détail)
-        # =====================================================================
-        with tab_list[tab_idx]:
-            st.subheader("🔍 Scénarios Personnalisés")
-            st.write(
-                "Définissez le statut final souhaité pour chaque équipe "
-                "et analysez les scénarios correspondants en détail."
-            )
-
+        # Onglet scénarios détaillés
+        with tab_list[2]:
+            st.subheader("🔍 Scénarios Détaillés")
             if not tous_scenarios:
-                st.warning(
-                    "Les scénarios détaillés ne sont disponibles "
-                    "qu'en mode exhaustif ou après une nouvelle simulation."
-                )
+                st.warning("Disponible uniquement après une simulation.")
             else:
                 equipes = champ["equipes"]
-
-                st.subheader("Définir les conditions")
                 conditions = {}
-                nb_cols    = 3
-                cols       = st.columns(nb_cols)
+                nb_cols_cond = 3
+                cols_cond = st.columns(nb_cols_cond)
 
                 for idx, eq in enumerate(equipes):
-                    with cols[idx % nb_cols]:
+                    with cols_cond[idx % nb_cols_cond]:
                         statut = st.selectbox(
                             eq,
                             options=["— (indifférent)", "monte",
@@ -1658,13 +1759,8 @@ def page_simulation(donnees, nom_champ):
                 if not conditions:
                     st.info("Sélectionnez au moins une condition.")
                 else:
-                    st.write("**Conditions sélectionnées :**")
-                    for eq, stat in conditions.items():
-                        emoji = ("🔵" if stat == "monte" else
-                                 "✅" if stat == "maintien" else "❌")
-                        st.write(f"  {emoji} **{eq}** → {stat}")
-
-                    if st.button("🔍 Analyser ces scénarios", type="primary"):
+                    if st.button("🔍 Analyser", type="primary",
+                                 key="btn_analyse_detail"):
                         (nb_ok, pct_ok, proba_match,
                          matchs_obligatoires, scenarios_ok) = \
                             analyser_scenarios_personnalises(
@@ -1672,20 +1768,15 @@ def page_simulation(donnees, nom_champ):
                                 matchs_rest_sim, nb_total,
                             )
                         st.session_state["analyse_perso"] = {
-                            "nb_ok":               nb_ok,
-                            "pct_ok":              pct_ok,
-                            "proba_match":         proba_match,
+                            "nb_ok": nb_ok, "pct_ok": pct_ok,
+                            "proba_match": proba_match,
                             "matchs_obligatoires": matchs_obligatoires,
-                            "scenarios_ok":        scenarios_ok,
-                            "conditions":          conditions,
+                            "scenarios_ok": scenarios_ok,
+                            "conditions": conditions,
                         }
 
                     if "analyse_perso" in st.session_state:
                         ap = st.session_state["analyse_perso"]
-
-                        st.divider()
-
-                        # Résultat global
                         col_r1, col_r2 = st.columns(2)
                         with col_r1:
                             st.metric("Scénarios correspondants",
@@ -1694,41 +1785,23 @@ def page_simulation(donnees, nom_champ):
                             st.metric("Probabilité", f"{ap['pct_ok']:.2f}%")
 
                         if ap["nb_ok"] == 0:
-                            st.error(
-                                "❌ Aucun scénario ne correspond à ces "
-                                "conditions. Cette combinaison est impossible."
-                            )
+                            st.error("❌ Aucun scénario ne correspond.")
                         else:
-                            # Matchs obligatoires
-                            st.subheader(
-                                "✅ Résultats obligatoires "
-                                "(communs à 100% des scénarios)"
-                            )
                             if ap["matchs_obligatoires"]:
+                                st.subheader("✅ Résultats obligatoires")
                                 for m in ap["matchs_obligatoires"]:
-                                    adversaire = (
-                                        m["exterieur"]
-                                        if m["vainqueur"] == m["domicile"]
-                                        else m["domicile"]
-                                    )
+                                    adv = (m["exterieur"]
+                                           if m["vainqueur"] == m["domicile"]
+                                           else m["domicile"])
                                     st.success(
                                         f"J{m['journee']} — "
                                         f"**{m['vainqueur']}** doit gagner "
-                                        f"contre **{adversaire}**"
+                                        f"contre **{adv}**"
                                     )
-                            else:
-                                st.info(
-                                    "Aucun résultat n'est obligatoire "
-                                    "dans tous les scénarios."
-                                )
 
-                            # Probabilités par match
-                            st.subheader(
-                                "📊 Probabilité de victoire par match "
-                                "dans ces scénarios"
-                            )
+                            st.subheader("📊 Probabilités par match")
                             rows_pm = [["Journée", "Domicile", "Extérieur",
-                                        "% Dom gagne", "% Ext gagne", "Favori"]]
+                                        "% Dom", "% Ext", "Favori"]]
                             for pm in ap["proba_match"]:
                                 favori = (pm["domicile"]
                                           if pm["pct_dom"] >= pm["pct_ext"]
@@ -1737,145 +1810,432 @@ def page_simulation(donnees, nom_champ):
                                     f"J{pm['journee']}",
                                     pm["domicile"], pm["exterieur"],
                                     f"{pm['pct_dom']:.1f}%",
-                                    f"{pm['pct_ext']:.1f}%",
-                                    favori,
+                                    f"{pm['pct_ext']:.1f}%", favori,
                                 ])
-
                             df_pm = pd.DataFrame(rows_pm[1:], columns=rows_pm[0])
 
                             def colorier_pm(row):
-                                pd_val = float(row["% Dom gagne"].replace("%",""))
-                                pe_val = float(row["% Ext gagne"].replace("%",""))
-                                colors = [""] * len(row)
-                                if pd_val == 100.0:
-                                    colors[3] = "background-color: #d4edda"
-                                    colors[4] = "background-color: #fadbd8"
-                                elif pe_val == 100.0:
-                                    colors[3] = "background-color: #fadbd8"
-                                    colors[4] = "background-color: #d4edda"
-                                elif pd_val >= 70:
-                                    colors[3] = "background-color: #d4edda"
-                                elif pe_val >= 70:
-                                    colors[4] = "background-color: #d4edda"
-                                return colors
+                                pd_v = float(row["% Dom"].replace("%",""))
+                                pe_v = float(row["% Ext"].replace("%",""))
+                                c = [""] * len(row)
+                                if pd_v == 100.0:
+                                    c[3] = "background-color: #d4edda"
+                                    c[4] = "background-color: #fadbd8"
+                                elif pe_v == 100.0:
+                                    c[3] = "background-color: #fadbd8"
+                                    c[4] = "background-color: #d4edda"
+                                elif pd_v >= 70:
+                                    c[3] = "background-color: #d4edda"
+                                elif pe_v >= 70:
+                                    c[4] = "background-color: #d4edda"
+                                return c
 
                             st.dataframe(
                                 df_pm.style.apply(colorier_pm, axis=1),
                                 use_container_width=True, hide_index=True,
                             )
-                            st.caption(
-                                "🟢 = résultat très favorable (≥70%) | "
-                                "🔴 = résultat défavorable | "
-                                "100% = résultat obligatoire"
-                            )
 
-                            # =================================================
-                            # DÉTAIL DES SCÉNARIOS (NOUVELLE FONCTIONNALITÉ)
-                            # =================================================
-                            st.divider()
+                            # Détail scénarios
                             st.subheader(
-                                f"📋 Détail des {ap['nb_ok']:,} scénarios "
-                                f"correspondants"
-                            )
+                                f"📋 Détail des {ap['nb_ok']:,} scénarios")
+                            MAX_DETAIL      = 50
+                            scenarios_ok    = ap["scenarios_ok"]
+                            scenarios_aff   = scenarios_ok[:MAX_DETAIL]
 
-                            scenarios_ok = ap["scenarios_ok"]
-
-                            # Limiter l'affichage si trop de scénarios
-                            MAX_DETAIL = 50
                             if len(scenarios_ok) > MAX_DETAIL:
                                 st.warning(
-                                    f"⚠️ {len(scenarios_ok):,} scénarios "
-                                    f"correspondent. Affichage limité aux "
-                                    f"{MAX_DETAIL} premiers. "
-                                    f"Ajoutez des conditions pour affiner."
-                                )
-                                scenarios_a_afficher = scenarios_ok[:MAX_DETAIL]
-                            else:
-                                scenarios_a_afficher = scenarios_ok
+                                    f"Affichage limité aux {MAX_DETAIL} "
+                                    f"premiers scénarios.")
 
-                            for idx_sc, sc in enumerate(scenarios_a_afficher, 1):
+                            for idx_sc, sc in enumerate(scenarios_aff, 1):
                                 bits       = sc["bits"]
                                 rangs      = sc["rangs_finaux"]
                                 pts_finaux = sc["pts_finaux"]
 
-                                # Titre de l'expander avec résumé
-                                resume_conditions = []
-                                for eq_cond, stat_cond in ap["conditions"].items():
-                                    rang_eq = rangs.get(eq_cond, "?")
-                                    emoji_c = ("🔵" if stat_cond == "monte" else
-                                               "✅" if stat_cond == "maintien"
-                                               else "❌")
-                                    resume_conditions.append(
-                                        f"{emoji_c} {eq_cond} ({rang_eq}e)"
-                                    )
-                                titre_exp = (
+                                resume = []
+                                for eq_c, stat_c in ap["conditions"].items():
+                                    rg = rangs.get(eq_c, "?")
+                                    em = ("🔵" if stat_c == "monte" else
+                                          "✅" if stat_c == "maintien" else "❌")
+                                    resume.append(f"{em} {eq_c} ({rg}e)")
+
+                                with st.expander(
                                     f"Scénario {idx_sc} — "
-                                    + " | ".join(resume_conditions)
-                                )
-
-                                with st.expander(titre_exp):
-                                    col_gauche, col_droite = st.columns(2)
-
-                                    # Colonne gauche : résultats des matchs
-                                    with col_gauche:
+                                    + " | ".join(resume)
+                                ):
+                                    c_g, c_d = st.columns(2)
+                                    with c_g:
                                         st.markdown("**Résultats des matchs :**")
                                         for i, match in enumerate(matchs_rest_sim):
-                                            vainqueur = (match["domicile"]
-                                                         if bits[i] == 0
-                                                         else match["exterieur"])
-                                            perdant   = (match["exterieur"]
-                                                         if bits[i] == 0
-                                                         else match["domicile"])
+                                            v = (match["domicile"]
+                                                 if bits[i] == 0
+                                                 else match["exterieur"])
+                                            p = (match["exterieur"]
+                                                 if bits[i] == 0
+                                                 else match["domicile"])
                                             st.write(
                                                 f"J{match['journee']} — "
-                                                f"**{vainqueur}** bat {perdant}"
-                                            )
-
-                                    # Colonne droite : classement final
-                                    with col_droite:
+                                                f"**{v}** bat {p}")
+                                    with c_d:
                                         st.markdown("**Classement final :**")
-                                        classement_trie = sorted(
-                                            rangs.items(),
-                                            key=lambda x: x[1]
-                                        )
-                                        for eq_cl, rang_cl in classement_trie:
+                                        for eq_cl, rg_cl in sorted(
+                                            rangs.items(), key=lambda x: x[1]
+                                        ):
                                             pts_eq = pts_finaux.get(eq_cl, "?")
-
-                                            # Déterminer la zone
-                                            if rang_cl <= nb_montees:
-                                                emoji_z = "🔵"
-                                                couleur = "blue"
-                                            elif rang_cl <= nb_maintien:
-                                                emoji_z = "✅"
-                                                couleur = "green"
+                                            if rg_cl <= nb_montees:
+                                                em_z = "🔵"
+                                            elif rg_cl <= nb_maintien:
+                                                em_z = "✅"
                                             else:
-                                                emoji_z = "❌"
-                                                couleur = "red"
-
-                                            # Mettre en évidence les équipes
-                                            # des conditions
+                                                em_z = "❌"
+                                            txt = (
+                                                f"**{em_z} {rg_cl}. "
+                                                f"{eq_cl} — {pts_eq} pts** 👈"
+                                                if eq_cl in ap["conditions"]
+                                                else
+                                                f"{em_z} {rg_cl}. "
+                                                f"{eq_cl} — {pts_eq} pts"
+                                            )
                                             if eq_cl in ap["conditions"]:
-                                                st.markdown(
-                                                    f"**{emoji_z} {rang_cl}. "
-                                                    f"{eq_cl} — {pts_eq} pts** 👈"
-                                                )
+                                                st.markdown(txt)
                                             else:
-                                                st.write(
-                                                    f"{emoji_z} {rang_cl}. "
-                                                    f"{eq_cl} — {pts_eq} pts"
-                                                )
-
-                            if len(scenarios_ok) > MAX_DETAIL:
-                                st.info(
-                                    f"... et {len(scenarios_ok) - MAX_DETAIL} "
-                                    f"autres scénarios non affichés."
-                                )
+                                                st.write(txt)
 
         st.caption(
             f"Mode : {'Exhaustive' if mode_ret == 'exhaustive' else 'Monte Carlo'} "
-            f"| Scénarios : {nb_total:,} | "
-            f"Écart moyen simulé : {diff_moyen_sim} pts"
+            f"| Scénarios : {nb_total:,} | Écart moyen : {diff_moyen_sim} pts"
         )
+
+
+# =============================================================================
+# PAGE SIMULATION PERSONNALISÉE (NOUVELLE FONCTIONNALITÉ)
+# =============================================================================
+
+def page_simulation_personnalisee(donnees, nom_champ):
+    champ = donnees["championnats"][nom_champ]
+    st.title(f"🎯 Simulation Personnalisée — {nom_champ}")
+
+    if not champ.get("equipes"):
+        st.warning("⚠️ Veuillez d'abord saisir les équipes.")
+        return
+
+    matchs_rest = get_matchs_restants(champ)
+    if not matchs_rest:
+        st.success("✅ Toutes les journées sont terminées !")
+        return
+
+    equipes        = champ["equipes"]
+    nb_equipes     = champ["nb_equipes"]
+    nb_relegations = champ["nb_relegations"]
+    nb_montees     = champ.get("nb_montees", 0)
+    nb_maintien    = nb_equipes - nb_relegations
+
+    # Initialiser les résultats fixés dans session_state
+    if "resultats_fixes_perso" not in st.session_state:
+        st.session_state["resultats_fixes_perso"] = {}
+    if "diff_moyen_perso" not in st.session_state:
+        st.session_state["diff_moyen_perso"] = 10
+
+    resultats_fixes = st.session_state["resultats_fixes_perso"]
+
+    # ── Mise en page : matchs à gauche, probabilités à droite ──────────────
+    col_matchs, col_probas = st.columns([3, 2])
+
+    with col_matchs:
+        # En-tête + contrôles
+        ctrl1, ctrl2, ctrl3 = st.columns([2, 2, 1])
+        with ctrl1:
+            st.markdown("### 📅 Matchs à venir")
+        with ctrl2:
+            diff_moyen = st.slider(
+                "Écart moyen simulé",
+                min_value=1, max_value=30,
+                value=st.session_state["diff_moyen_perso"],
+                step=1, key="slider_diff_perso",
+                label_visibility="visible",
+            )
+            st.session_state["diff_moyen_perso"] = diff_moyen
+        with ctrl3:
+            st.write("")
+            if st.button("🔄 Reset", help="Réinitialiser tous les résultats"):
+                st.session_state["resultats_fixes_perso"] = {}
+                st.session_state.pop("probas_perso", None)
+                st.rerun()
+
+        nb_fixes = len(resultats_fixes)
+        nb_total_matchs = len(matchs_rest)
+        st.caption(
+            f"{nb_fixes} / {nb_total_matchs} matchs fixés — "
+            f"{nb_total_matchs - nb_fixes} matchs simulés aléatoirement"
+        )
+
+        # Grouper les matchs par journée
+        matchs_par_journee = defaultdict(list)
+        for m in matchs_rest:
+            matchs_par_journee[m["journee"]].append(m)
+
+        # Afficher chaque journée
+        for j_num in sorted(matchs_par_journee.keys()):
+            matchs_j = matchs_par_journee[j_num]
+
+            st.markdown(
+                f"<div style='color:#3498db; font-weight:bold; "
+                f"font-size:16px; margin:12px 0 6px 0;'>"
+                f"── JOURNÉE {j_num} ──</div>",
+                unsafe_allow_html=True,
+            )
+
+            # Afficher les matchs de cette journée par paires (2 par ligne)
+            nb_matchs_j = len(matchs_j)
+            nb_colonnes = min(2, nb_matchs_j)
+            cols_j      = st.columns(nb_colonnes)
+
+            for m_idx, match in enumerate(matchs_j):
+                dom = match["domicile"]
+                ext = match["exterieur"]
+                cle = (match["journee"], dom, ext)
+
+                vainqueur_fixe = resultats_fixes.get(cle, None)
+
+                with cols_j[m_idx % nb_colonnes]:
+                    # Carte de match
+                    st.markdown(
+                        f"""<div style='background-color:#0e1a2e;
+                        border:1px solid #2c3e50; border-radius:10px;
+                        padding:8px; margin:4px 0;'>""",
+                        unsafe_allow_html=True,
+                    )
+
+                    # Style des boutons selon le vainqueur sélectionné
+                    if vainqueur_fixe == "dom":
+                        style_dom = ("background-color:#1e7e34; color:white; "
+                                     "border:2px solid #28a745;")
+                        style_ext = ("background-color:#2c3e50; color:#aaa; "
+                                     "border:2px solid #4a4a4a;")
+                    elif vainqueur_fixe == "ext":
+                        style_dom = ("background-color:#2c3e50; color:#aaa; "
+                                     "border:2px solid #4a4a4a;")
+                        style_ext = ("background-color:#1e7e34; color:white; "
+                                     "border:2px solid #28a745;")
+                    else:
+                        style_dom = ("background-color:#1a3a6b; color:white; "
+                                     "border:2px solid #2980b9;")
+                        style_ext = ("background-color:#1a3a6b; color:white; "
+                                     "border:2px solid #2980b9;")
+
+                    # Bouton domicile
+                    key_dom = f"btn_dom_{j_num}_{dom}_{ext}"
+                    if st.button(
+                        f"🏠 {dom}",
+                        key=key_dom,
+                        use_container_width=True,
+                        help=f"Cliquer pour que {dom} gagne",
+                    ):
+                        if vainqueur_fixe == "dom":
+                            # Désélectionner si déjà sélectionné
+                            del st.session_state["resultats_fixes_perso"][cle]
+                        else:
+                            st.session_state["resultats_fixes_perso"][cle] = "dom"
+                        st.session_state.pop("probas_perso", None)
+                        st.rerun()
+
+                    # Séparateur "vs"
+                    st.markdown(
+                        "<div style='text-align:center; color:#7f8c8d; "
+                        "font-size:11px; margin:2px 0;'>vs</div>",
+                        unsafe_allow_html=True,
+                    )
+
+                    # Bouton extérieur
+                    key_ext = f"btn_ext_{j_num}_{dom}_{ext}"
+                    if st.button(
+                        f"✈️ {ext}",
+                        key=key_ext,
+                        use_container_width=True,
+                        help=f"Cliquer pour que {ext} gagne",
+                    ):
+                        if vainqueur_fixe == "ext":
+                            del st.session_state["resultats_fixes_perso"][cle]
+                        else:
+                            st.session_state["resultats_fixes_perso"][cle] = "ext"
+                        st.session_state.pop("probas_perso", None)
+                        st.rerun()
+
+                    # Indicateur du statut du match
+                    if vainqueur_fixe == "dom":
+                        st.markdown(
+                            f"<div style='text-align:center; color:#28a745; "
+                            f"font-size:10px;'>✅ {dom} désigné vainqueur</div>",
+                            unsafe_allow_html=True,
+                        )
+                    elif vainqueur_fixe == "ext":
+                        st.markdown(
+                            f"<div style='text-align:center; color:#28a745; "
+                            f"font-size:10px;'>✅ {ext} désigné vainqueur</div>",
+                            unsafe_allow_html=True,
+                        )
+                    else:
+                        st.markdown(
+                            "<div style='text-align:center; color:#7f8c8d; "
+                            "font-size:10px;'>⬜ Simulé aléatoirement</div>",
+                            unsafe_allow_html=True,
+                        )
+
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+        # Bouton de calcul
+        st.divider()
+        if st.button("🚀 Calculer les probabilités", type="primary",
+                     use_container_width=True):
+            with st.spinner("Calcul en cours..."):
+                probas, nb_sc, mode_sc = calculer_proba_avec_resultats_fixes(
+                    champ,
+                    st.session_state["resultats_fixes_perso"],
+                    st.session_state["diff_moyen_perso"],
+                )
+            st.session_state["probas_perso"]    = probas
+            st.session_state["nb_sc_perso"]     = nb_sc
+            st.session_state["mode_sc_perso"]   = mode_sc
+            st.rerun()
+
+    # ── Colonne droite : Probabilités de maintien ───────────────────────────
+    with col_probas:
+        probas   = st.session_state.get("probas_perso", None)
+        nb_sc    = st.session_state.get("nb_sc_perso", 0)
+        mode_sc  = st.session_state.get("mode_sc_perso", "")
+
+        nb_fixes_actuel = len(st.session_state["resultats_fixes_perso"])
+
+        if nb_fixes_actuel == nb_total_matchs and nb_fixes_actuel > 0:
+            # Tous les matchs sont fixés → résultat déterministe
+            st.markdown("### 🎯 Résultat déterministe")
+            st.info("Tous les matchs sont fixés. Le classement est unique.")
+        else:
+            st.markdown("### 📊 Probabilités de maintien")
+            if nb_sc > 0:
+                st.caption(
+                    f"{'Exhaustif' if mode_sc == 'exhaustive' else 'Monte Carlo'} "
+                    f"| {nb_sc:,} scénarios"
+                )
+            else:
+                st.caption("Cliquez sur 'Calculer' pour voir les probabilités")
+
+        if probas:
+            # Affichage style tableau de bord
+            for rang, item in enumerate(probas, 1):
+                eq  = item["equipe"]
+                pct = item["pct"]
+
+                # Couleur de la barre selon le %
+                if pct == 100.0:   couleur_barre = "#1e7e34"
+                elif pct >= 90.0:  couleur_barre = "#28a745"
+                elif pct >= 70.0:  couleur_barre = "#ffc107"
+                elif pct >= 50.0:  couleur_barre = "#fd7e14"
+                elif pct > 0.0:    couleur_barre = "#dc3545"
+                else:              couleur_barre = "#4a4a4a"
+
+                # Couleur de fond selon la zone
+                if rang <= nb_montees:
+                    bg_color   = "#0d2a4a"
+                    badge_color = "#2980b9"
+                    badge_txt   = "↑"
+                elif rang <= nb_maintien:
+                    bg_color   = "#0d2e1a"
+                    badge_color = "#1e7e34"
+                    badge_txt   = "="
+                else:
+                    bg_color   = "#2e0d0d"
+                    badge_color = "#c0392b"
+                    badge_txt   = "↓"
+
+                largeur_barre = int(pct)
+
+                st.markdown(f"""
+                <div style='background-color:{bg_color};
+                     border-radius:8px; padding:8px 10px;
+                     margin:3px 0; border:1px solid #2c3e50;'>
+                    <div style='display:flex; justify-content:space-between;
+                         align-items:center; margin-bottom:4px;'>
+                        <div style='display:flex; align-items:center; gap:8px;'>
+                            <span style='background-color:{badge_color};
+                                color:white; border-radius:4px;
+                                padding:1px 6px; font-size:11px;
+                                font-weight:bold;'>{badge_txt}</span>
+                            <span style='font-weight:bold; color:white;
+                                font-size:13px;'>{rang}. {eq}</span>
+                        </div>
+                        <span style='color:white; font-weight:bold;
+                            font-size:14px;'>{pct:.1f}%</span>
+                    </div>
+                    <div style='background-color:#2c3e50; border-radius:4px;
+                         height:6px; width:100%;'>
+                        <div style='background-color:{couleur_barre};
+                             border-radius:4px; height:6px;
+                             width:{largeur_barre}%;'></div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            # Légende
+            st.markdown("")
+            col_l1, col_l2, col_l3 = st.columns(3)
+            with col_l1:
+                if nb_montees > 0:
+                    st.markdown(
+                        "<span style='color:#2980b9'>↑ Montée</span>",
+                        unsafe_allow_html=True)
+            with col_l2:
+                st.markdown(
+                    "<span style='color:#1e7e34'>= Maintien</span>",
+                    unsafe_allow_html=True)
+            with col_l3:
+                st.markdown(
+                    "<span style='color:#c0392b'>↓ Relégation</span>",
+                    unsafe_allow_html=True)
+
+            # Montées si applicable
+            if nb_montees > 0:
+                st.markdown("---")
+                st.markdown("### 🔵 Probabilités de montée")
+                probas_montee = sorted(probas, key=lambda x: x["pct_montee"],
+                                       reverse=True)
+                for item in probas_montee:
+                    if item["pct_montee"] == 0:
+                        continue
+                    pct_m = item["pct_montee"]
+                    larg  = int(pct_m)
+                    st.markdown(f"""
+                    <div style='background-color:#0d2a4a;
+                         border-radius:8px; padding:6px 10px;
+                         margin:2px 0; border:1px solid #2c3e50;'>
+                        <div style='display:flex; justify-content:space-between;
+                             align-items:center; margin-bottom:3px;'>
+                            <span style='color:white; font-size:12px;'>
+                                {item['equipe']}</span>
+                            <span style='color:#2980b9; font-weight:bold;'>
+                                {pct_m:.1f}%</span>
+                        </div>
+                        <div style='background-color:#2c3e50; border-radius:4px;
+                             height:5px;'>
+                            <div style='background-color:#2980b9;
+                                 border-radius:4px; height:5px;
+                                 width:{larg}%;'></div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+        else:
+            # Message d'invite
+            st.markdown("""
+            <div style='background-color:#0e1a2e; border:1px dashed #2c3e50;
+                 border-radius:10px; padding:20px; text-align:center;
+                 color:#7f8c8d; margin-top:20px;'>
+                <div style='font-size:30px;'>🎯</div>
+                <div style='margin-top:10px;'>
+                    Cliquez sur les équipes pour fixer des résultats<br>
+                    puis sur <b>Calculer</b> pour voir les probabilités
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
 
 
 def page_rapport(donnees, nom_champ):
@@ -1961,10 +2321,12 @@ def main():
             if champ_select != "-- Sélectionner --":
                 if champ_select != nom_champ:
                     st.session_state["champ_actif"] = champ_select
-                    st.session_state.pop("resultats_sim",  None)
-                    st.session_state.pop("compteur_rang",  None)
-                    st.session_state.pop("tous_scenarios", None)
-                    st.session_state.pop("analyse_perso",  None)
+                    st.session_state.pop("resultats_sim",        None)
+                    st.session_state.pop("compteur_rang",        None)
+                    st.session_state.pop("tous_scenarios",       None)
+                    st.session_state.pop("analyse_perso",        None)
+                    st.session_state.pop("probas_perso",         None)
+                    st.session_state.pop("resultats_fixes_perso",None)
                     st.rerun()
                 nom_champ = champ_select
                 champ_ok  = True
@@ -1981,12 +2343,13 @@ def main():
         ]
         if champ_ok:
             pages += [
-                ("👥", "equipes",    "Équipes"),
-                ("📅", "calendrier", "Calendrier"),
-                ("📝", "resultats",  "Résultats"),
-                ("📊", "classement", "Classement"),
-                ("🎲", "simulation", "Simulation"),
-                ("📄", "rapport",    "Rapport PDF"),
+                ("👥", "equipes",                 "Équipes"),
+                ("📅", "calendrier",              "Calendrier"),
+                ("📝", "resultats",               "Résultats"),
+                ("📊", "classement",              "Classement"),
+                ("🎲", "simulation",              "Simulation"),
+                ("🎯", "simulation_personnalisee","Simulation Personnalisée"),
+                ("📄", "rapport",                 "Rapport PDF"),
             ]
 
         for icone, page_id, label in pages:
@@ -2020,9 +2383,10 @@ def main():
         - 📊 Classement automatique avec règles de départage FFBB
         - 📈 Évolution du classement au fil des journées
         - 🎲 Simulation exhaustive ou Monte Carlo
-        - 🔵 Probabilités de montée et de maintien
+        - 🎯 **Simulation Personnalisée** : fixez des résultats et
+          voyez les probabilités se mettre à jour dynamiquement
         - 📈 Distribution des classements finaux
-        - 🔍 Analyse et détail des scénarios personnalisés
+        - 🔍 Analyse détaillée des scénarios
         - 💾 Sauvegarde et restauration des données
         - 📄 Génération de rapport PDF
 
@@ -2056,6 +2420,8 @@ def main():
         page_classement(donnees, nom_champ)
     elif page == "simulation" and champ_ok:
         page_simulation(donnees, nom_champ)
+    elif page == "simulation_personnalisee" and champ_ok:
+        page_simulation_personnalisee(donnees, nom_champ)
     elif page == "rapport" and champ_ok:
         page_rapport(donnees, nom_champ)
     else:
